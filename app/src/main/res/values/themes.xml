@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.OldGround" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/og_bg</item>
+        <item name="android:statusBarColor">@color/og_bg</item>
+        <item name="android:navigationBarColor">@color/og_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+    <color name="og_bg">#F2EFE6</color>
+    <color name="og_rust">#A4541C</color>
+    <color name="og_green">#2F5D46</color>
+</resources>

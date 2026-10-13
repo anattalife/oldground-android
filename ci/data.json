@@ -1,0 +1,374 @@
+{
+ "maps": [
+  {
+   "id": "ci1",
+   "name": "1875 Licking Township Atlas",
+   "createdAt": 0,
+   "image": "original.jpg",
+   "width": 2400,
+   "height": 1800,
+   "anchors": [
+    {
+     "id": "a1",
+     "imgX": 200.0,
+     "imgY": 200.0,
+     "lng": -82.99879,
+     "lat": 39.96473
+    },
+    {
+     "id": "a2",
+     "imgX": 2200.0,
+     "imgY": 180.0,
+     "lng": -82.98121,
+     "lat": 39.96486
+    },
+    {
+     "id": "a3",
+     "imgX": 1200.0,
+     "imgY": 900.0,
+     "lng": -82.99,
+     "lat": 39.96
+    },
+    {
+     "id": "a4",
+     "imgX": 250.0,
+     "imgY": 1600.0,
+     "lng": -82.99835,
+     "lat": 39.95527
+    },
+    {
+     "id": "a5",
+     "imgX": 2150.0,
+     "imgY": 1650.0,
+     "lng": -82.98165,
+     "lat": 39.95493
+    },
+    {
+     "id": "a6",
+     "imgX": 1100.0,
+     "imgY": 650.0,
+     "lng": -82.99088,
+     "lat": 39.96169
+    }
+   ]
+  }
+ ],
+ "pins": [
+  {
+   "id": "p1",
+   "name": "J. Miller homestead",
+   "kind": "HOMESITE",
+   "lng": -82.99563,
+   "lat": 39.96142,
+   "note": "House on the 1875 atlas, gone by 1912.",
+   "mapId": "ci1",
+   "createdAt": 1788274800000
+  },
+  {
+   "id": "p2",
+   "name": "1864 Indian Head cent",
+   "kind": "FIND",
+   "lng": -82.99528,
+   "lat": 39.96115,
+   "note": "By the old lane, near the Miller house.",
+   "mapId": "ci1",
+   "createdAt": 1791731400000,
+   "photos": [
+    "ci-cent1.jpg",
+    "ci-cent2.jpg"
+   ],
+   "category": "Coin",
+   "material": "Copper",
+   "depthIn": 6.0,
+   "vdi": 78,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 4
+  },
+  {
+   "id": "p3",
+   "name": "Fulton farm",
+   "kind": "PERMISSION",
+   "lng": -82.98771,
+   "lat": 39.95811,
+   "note": "OK to hunt after harvest.",
+   "createdAt": 1788361200000
+  },
+  {
+   "id": "p4",
+   "name": "Old mill race",
+   "kind": "LIDAR",
+   "lng": -82.9856,
+   "lat": 39.95595,
+   "note": "Ditch shows on Stretched LiDAR.",
+   "createdAt": 1788447600000
+  },
+  {
+   "id": "p5",
+   "name": "1901 Barber dime",
+   "kind": "FIND",
+   "lng": -82.99447,
+   "lat": 39.96072,
+   "note": "Edge of the yard, under the maple.",
+   "mapId": "ci1",
+   "createdAt": 1791736200000,
+   "photos": [
+    "ci-dime.jpg"
+   ],
+   "category": "Coin",
+   "material": "Silver",
+   "depthIn": 7.0,
+   "vdi": 86,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 5
+  },
+  {
+   "id": "p6",
+   "name": "Eagle coat button",
+   "kind": "FIND",
+   "lng": -82.994,
+   "lat": 39.961,
+   "note": "",
+   "mapId": "ci1",
+   "createdAt": 1791123600000,
+   "photos": [
+    "ci-button.jpg"
+   ],
+   "category": "Button",
+   "material": "Brass",
+   "depthIn": 5.0,
+   "vdi": 62,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 3
+  },
+  {
+   "id": "p7",
+   "name": "Flat button",
+   "kind": "FIND",
+   "lng": -82.988,
+   "lat": 39.9585,
+   "note": "",
+   "createdAt": 1790614800000,
+   "category": "Button",
+   "material": "Copper",
+   "depthIn": 4.0,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 2
+  },
+  {
+   "id": "p8",
+   "name": "10K gold band",
+   "kind": "FIND",
+   "lng": -83.028,
+   "lat": 39.945,
+   "note": "",
+   "createdAt": 1786816800000,
+   "photos": [
+    "ci-ring.jpg"
+   ],
+   "category": "Jewelry",
+   "material": "Gold",
+   "depthIn": 3.0,
+   "vdi": 41,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 5
+  },
+  {
+   "id": "p9",
+   "name": "1919 wheat cent",
+   "kind": "FIND",
+   "lng": -82.995,
+   "lat": 39.9606,
+   "note": "",
+   "createdAt": 1791738300000,
+   "category": "Coin",
+   "material": "Copper",
+   "depthIn": 4.0,
+   "vdi": 77,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 2
+  },
+  {
+   "id": "p10",
+   "name": "Seated Liberty dime",
+   "kind": "FIND",
+   "lng": -82.9948,
+   "lat": 39.9609,
+   "note": "Near the old well.",
+   "createdAt": 1791124800000,
+   "photos": [
+    "ci-cent2.jpg"
+   ],
+   "category": "Coin",
+   "material": "Silver",
+   "depthIn": 8.0,
+   "vdi": 84,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 5
+  },
+  {
+   "id": "p11",
+   "name": "Musket ball",
+   "kind": "FIND",
+   "lng": -82.9955,
+   "lat": 39.9602,
+   "note": "",
+   "createdAt": 1789920000000,
+   "category": "Relic",
+   "material": "Lead",
+   "depthIn": 6.0,
+   "vdi": 48,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 3
+  },
+  {
+   "id": "p12",
+   "name": "Store token",
+   "kind": "FIND",
+   "lng": -82.987,
+   "lat": 39.9579,
+   "note": "",
+   "createdAt": 1790619000000,
+   "photos": [
+    "ci-button.jpg"
+   ],
+   "category": "Token",
+   "material": "Brass",
+   "depthIn": 5.0,
+   "vdi": 60,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 4
+  },
+  {
+   "id": "p13",
+   "name": "Cap gun piece",
+   "kind": "FIND",
+   "lng": -82.97,
+   "lat": 39.97,
+   "note": "",
+   "createdAt": 1785427200000,
+   "category": "Relic",
+   "material": "Iron",
+   "depthIn": 3.0,
+   "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
+   "rating": 1
+  }
+ ],
+ "tracks": [
+  {
+   "id": "t2",
+   "name": "Track Oct 11, 2026",
+   "startedAt": 1791729600000
+  },
+  {
+   "id": "t1",
+   "name": "Hunt Oct 4, 2026",
+   "startedAt": 1791126000000
+  }
+ ],
+ "settings": {
+  "lastDetector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92"
+ },
+ "sites": [
+  {
+   "id": "s1",
+   "name": "Miller homestead",
+   "access": "Permission",
+   "outline": [
+    [
+     -82.9964,
+     39.96175
+    ],
+    [
+     -82.9933,
+     39.9616
+    ],
+    [
+     -82.9932,
+     39.96
+    ],
+    [
+     -82.9961,
+     39.95995
+    ]
+   ],
+   "photo": "ci-tray1.jpg",
+   "createdAt": 1788274800000,
+   "note": "Ask for Ruth at the farmhouse."
+  },
+  {
+   "id": "s2",
+   "name": "Fulton farm",
+   "access": "Permission",
+   "outline": [
+    [
+     -82.989,
+     39.959
+    ],
+    [
+     -82.9862,
+     39.95905
+    ],
+    [
+     -82.98615,
+     39.9572
+    ],
+    [
+     -82.9889,
+     39.95715
+    ]
+   ],
+   "photo": "ci-tray2.jpg",
+   "createdAt": 1788361200000,
+   "permission": {
+    "ownerName": "Ruth Fulton",
+    "ownerPhone": "740-555-0142",
+    "hunterName": "Brandon",
+    "startsAt": 1763322986338,
+    "expiresAt": 1792871786338,
+    "conditions": [
+     "Fill every hole and leave the ground as I found it.",
+     "Call or text before each visit."
+    ],
+    "signedAt": 1763322986338,
+    "signature": "sig-ci.png",
+    "pdf": "permission-ci.pdf"
+   },
+   "contacts": [
+    {
+     "at": 1790106986338,
+     "how": "Call",
+     "note": "Said fine to come Saturday mornings"
+    },
+    {
+     "at": 1791575786338,
+     "how": "Text",
+     "note": "Asked about renewing in spring"
+    }
+   ]
+  },
+  {
+   "id": "s3",
+   "name": "Wyman Woods Park",
+   "access": "Public land",
+   "outline": [
+    [
+     -83.029,
+     39.9458
+    ],
+    [
+     -83.027,
+     39.9459
+    ],
+    [
+     -83.0269,
+     39.9442
+    ],
+    [
+     -83.0291,
+     39.9441
+    ]
+   ],
+   "createdAt": 1786806000000
+  }
+ ]
+}

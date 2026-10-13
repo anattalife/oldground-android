@@ -1,0 +1,131 @@
+# Builds the app on every push to main.
+#  - Success: the APK replaces the "test-build" release, so the download link never changes:
+#    https://github.com/anattalife/detecting-map-android/releases/download/test-build/oldground.apk
+#  - Either way: a comment on the commit says whether it built, with the errors if it didn't.
+name: Build APK
+
+on:
+  push:
+    branches: [main, 'preview/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Build and test
+        run: |
+          set -o pipefail
+          gradle --no-daemon --console=plain assembleDebug testDebugUnitTest 2>&1 | tee build.log
+
+      - name: Publish APK
+        id: publish
+        if: success() && github.ref == 'refs/heads/main'
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk oldground.apk
+          gh release delete test-build --cleanup-tag -y || true
+          gh release create test-build oldground.apk \
+            --target "${{ github.sha }}" --prerelease \
+            --title "Test build ${{ github.run_number }}" \
+            --notes "Built from ${{ github.sha }}. Install oldground.apk on your Android device."
+          {
+            echo "BUILD OK (run ${{ github.run_number }})"
+            echo
+            echo "APK: https://github.com/${{ github.repository }}/releases/download/test-build/oldground.apk"
+          } > comment.txt
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@comment.txt
+
+      - name: Publish preview (branches other than main; the test-build link is untouched)
+        id: preview
+        if: success() && github.ref != 'refs/heads/main'
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk oldground.apk
+          # Also under a name with the version, so a phone's browser never reuses an older download.
+          cp oldground.apk "oldground-0.1.${{ github.run_number }}.apk"
+          gh release delete preview --cleanup-tag -y || true
+          gh release create preview oldground.apk "oldground-0.1.${{ github.run_number }}.apk" --target "${{ github.sha }}" --prerelease \
+            --title "Preview ${{ github.ref_name }}" --notes "Screenshots and APK from ${{ github.sha }}. Not the main test build."
+
+      - name: Enable KVM
+        if: success()
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Smoke test on an emulator
+        if: success()
+        continue-on-error: true
+        timeout-minutes: 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash ci/smoke.sh
+
+      - name: Report smoke test
+        if: always() && (steps.publish.outcome == 'success' || steps.preview.outcome == 'success')
+        run: |
+          mkdir -p smoke
+          TAG=${{ github.ref == 'refs/heads/main' && 'test-build' || 'preview' }}
+          for f in smoke/*.png; do [ -s "$f" ] && gh release upload "$TAG" "$f" --clobber || true; done
+          {
+            echo "SMOKE TEST (run ${{ github.run_number }})"
+            echo
+            echo '```'
+            cat smoke/result.txt 2>/dev/null || echo "no result"
+            cat smoke/padus.txt 2>/dev/null
+            echo '```'
+            echo "App crash file:"
+            echo '```'
+            head -c 6000 smoke/last-crash.txt 2>/dev/null
+            echo '```'
+            echo "Crash buffer:"
+            echo '```'
+            head -c 15000 smoke/crash.txt 2>/dev/null
+            echo '```'
+            echo "Errors:"
+            echo '```'
+            grep -v "^--------- beginning" smoke/errors.txt 2>/dev/null | tail -c 15000
+            echo '```'
+          } > smoke.txt
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@smoke.txt
+
+      - name: Report errors
+        if: failure()
+        run: |
+          touch build.log
+          grep -nE "^e: |error:|FAILED|What went wrong|Could not|Unresolved|Exception" build.log | head -120 > errors.txt || true
+          if [ ! -s errors.txt ]; then tail -120 build.log > errors.txt; fi
+          {
+            echo "BUILD FAILED (run ${{ github.run_number }})"
+            echo
+            echo '```'
+            cut -c1-400 errors.txt
+            echo '```'
+          } > comment.txt
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@comment.txt
