@@ -12,33 +12,28 @@ import java.io.File
 import java.net.URLEncoder
 
 /**
- * Map sources:
- *  - Streets: OpenFreeMap (OpenStreetMap data, no key, commercial use allowed)
- *  - Satellite: Esri World Imagery (ArcGIS Location Platform key) drawn over USGS aerial
- *    imagery. Offline areas save the USGS imagery only, so satellite still shows without
- *    signal. Without a key, USGS alone.
+ * Map sources. The map itself is Google's (free on phones): Streets is Google's road map
+ * and Satellite is Google's imagery. Everything else is tiles drawn on top of it:
  *  - Topo: USGS The National Map (US government, no key)
  *  - LiDAR: USGS 3DEP bare-earth elevation, shaded by the USGS server
+ *  - USGS aerial imagery: what offline areas save for Satellite (Google's imagery can't be
+ *    stored on the phone), and Satellite wherever it has to be a tile layer (Swipe's left
+ *    side, or Satellite laid over another map)
+ *  - Old maps: tiles built on the phone
  */
 object Sources {
-    const val STREETS_STYLE = "https://tiles.openfreemap.org/styles/liberty"
-    const val GLYPHS = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf"
-    const val FONT = "Noto Sans Regular"
     private const val USGS = "https://basemap.nationalmap.gov/arcgis/rest/services"
     const val TOPO = "$USGS/USGSTopo/MapServer/tile/{z}/{y}/{x}"
     const val AERIAL = "$USGS/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}"
-    private const val USGS_ATTRIB = "USGS The National Map"
+    const val USGS_ATTRIB = "USGS The National Map"
 
-    /** Esri imagery is used only while the app holds a valid token from oldgroundapp.com (see EsriToken). */
-    val hasEsri get() = EsriToken.current() != null
-    /** Esri imagery (billed per tile) only when zoomed in this far; the free USGS imagery shows below it. */
-    const val ESRI_MIN_ZOOM = 16f
-    private const val ESRI_ATTRIB = "Powered by Esri | Esri, Maxar, Earthstar Geographics, and the GIS User Community"
-    private val ESRI_IMAGERY get() =
-        "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?token=" +
-            URLEncoder.encode(EsriToken.current() ?: "", "UTF-8")
+    /** A raster tile layer. [url] holds {z}/{x}/{y} or {bbox-epsg-3857}; file:// for tiles on the phone. */
+    data class Raster(val id: String, val url: String, val maxZoom: Float, val minZoom: Float = 0f, val bounds: FloatArray? = null, val attribution: String = "") {
+        override fun equals(other: Any?) = other is Raster && other.id == id && other.url == url
+        override fun hashCode() = id.hashCode() * 31 + url.hashCode()
+    }
 
-    /** USGS aerial imagery: what offline areas save for Satellite. */
+    /** USGS aerial imagery. */
     val usgsAerial = Raster("aerial", AERIAL, 16f, attribution = USGS_ATTRIB)
 
     fun lidar(s: Settings): String {
@@ -54,12 +49,12 @@ object Sources {
             "&renderingRule=" + URLEncoder.encode(rule, "UTF-8").replace("+", "%20")
     }
 
-    /** A raster tile layer to draw over a base map. */
-    data class Raster(val id: String, val url: String, val maxZoom: Float, val minZoom: Float = 0f, val bounds: FloatArray? = null, val attribution: String = "")
-
-    /** A tile layer for anything except Streets (which is a full vector style). */
+    /**
+     * A layer as tiles. Streets has none (it's Google's road map). Satellite as tiles is the
+     * USGS imagery; as a base map it's Google's (see OgMap).
+     */
     fun raster(layer: Layer, s: Settings, map: OldMap?): Raster? = when (layer) {
-        Layer.AERIAL -> if (hasEsri) Raster("esri", ESRI_IMAGERY, 19f, minZoom = ESRI_MIN_ZOOM, attribution = ESRI_ATTRIB) else usgsAerial
+        Layer.AERIAL -> usgsAerial
         Layer.TOPO -> Raster("topo", TOPO, 16f, attribution = USGS_ATTRIB)
         Layer.LIDAR -> Raster("lidar-${s.lidarStyle}-${s.lidarAzimuth}", lidar(s), 18f, attribution = "USGS 3DEP")
         Layer.OLDMAP -> map?.warp?.takeIf { it.ready }?.let { tiles(map.id, it, "old-${it.dir}-${it.zDone}") }
@@ -75,21 +70,5 @@ object Sources {
             id, "file://$dir/{z}/{x}/{y}.webp", maxZoom = p.zDone.toFloat(), minZoom = p.zMin.toFloat(),
             bounds = floatArrayOf(sw.lng.toFloat(), sw.lat.toFloat(), ne.lng.toFloat(), ne.lat.toFloat()),
         )
-    }
-
-    /** A complete style with one raster layer (used for Topo / Satellite / LiDAR bases and offline downloads). */
-    fun rasterStyleJson(r: Raster?, withAerialUnder: Boolean = false, background: String = "#e9e6dc"): String {
-        val src = StringBuilder()
-        val layers = StringBuilder("""{"id":"bg","type":"background","paint":{"background-color":"$background"}}""")
-        fun add(id: String, url: String, max: Float, attribution: String, min: Float = 0f) {
-            if (src.isNotEmpty()) src.append(',')
-            val minJson = if (min > 0f) ""","minzoom":${min.toInt()}""" else ""
-            src.append(""""$id":{"type":"raster","tiles":["$url"],"tileSize":256$minJson,"maxzoom":${max.toInt()},"attribution":"$attribution"}""")
-            layers.append(""",{"id":"$id","type":"raster","source":"$id"}""")
-        }
-        if (withAerialUnder) add("aerial-under", AERIAL, 16f, USGS_ATTRIB)
-        // Only network sources get a minzoom; phone-built tiles keep theirs out of the style (as before).
-        if (r != null) add(r.id, r.url, r.maxZoom, r.attribution, if (r.url.startsWith("http")) r.minZoom else 0f)
-        return """{"version":8,"glyphs":"$GLYPHS","sources":{$src},"layers":[$layers]}"""
     }
 }

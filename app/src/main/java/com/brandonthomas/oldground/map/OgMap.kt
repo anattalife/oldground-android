@@ -1,5 +1,6 @@
 package com.brandonthomas.oldground.map
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -7,28 +8,39 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
-import android.graphics.RectF
+import android.graphics.Typeface
 import android.view.Gravity
+import android.view.MotionEvent
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.TextView
 import com.brandonthomas.oldground.data.Layer
 import com.brandonthomas.oldground.geo.LngLat
-import org.maplibre.android.camera.CameraPosition
-import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.maps.MapLibreMap
-import org.maplibre.android.maps.MapLibreMapOptions
-import org.maplibre.android.maps.MapView
-import org.maplibre.android.maps.Style
-import org.maplibre.android.style.expressions.Expression
-import org.maplibre.android.style.layers.CircleLayer
-import org.maplibre.android.style.layers.FillLayer
-import org.maplibre.android.style.layers.LineLayer
-import org.maplibre.android.style.layers.Property
-import org.maplibre.android.style.layers.PropertyFactory
-import org.maplibre.android.style.layers.RasterLayer
-import org.maplibre.android.style.layers.SymbolLayer
-import org.maplibre.android.style.sources.GeoJsonSource
-import org.maplibre.android.style.sources.RasterSource
-import org.maplibre.android.style.sources.TileSet
-import org.maplibre.geojson.FeatureCollection
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.GoogleMap
+import com.google.android.gms.maps.GoogleMapOptions
+import com.google.android.gms.maps.MapView
+import com.google.android.gms.maps.model.BitmapDescriptor
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.Dash
+import com.google.android.gms.maps.model.Gap
+import com.google.android.gms.maps.model.JointType
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MapStyleOptions
+import com.google.android.gms.maps.model.Marker
+import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.Polygon as GPolygon
+import com.google.android.gms.maps.model.PolygonOptions
+import com.google.android.gms.maps.model.Polyline
+import com.google.android.gms.maps.model.PolylineOptions
+import com.google.android.gms.maps.model.RoundCap
+import com.google.android.gms.maps.model.Tile
+import com.google.android.gms.maps.model.TileOverlay
+import com.google.android.gms.maps.model.TileOverlayOptions
+import com.google.android.gms.maps.model.TileProvider
+import java.io.ByteArrayOutputStream
+import kotlin.math.abs
 
 /** What a map shows underneath everything else. */
 sealed class Base {
@@ -41,27 +53,41 @@ sealed class Base {
 /** The data drawn on top of a map, in drawing order. */
 enum class Data { LAND, SITES, TRACKS, GUIDE, MESH, ANCHORS, PINS, DRAFT, GHOST, GPS }
 
+/** A camera position. [zoom] is on the app's scale (Google's zoom minus one). */
 data class Cam(val center: LngLat, val zoom: Double, val bearing: Double)
 
 /**
- * One MapLibre map plus everything the app draws on it. Holds the wanted state (base,
- * overlay, data) and re-applies it whenever the style reloads, so callers can set things
- * at any time.
+ * One Google map plus everything the app draws on it. Holds the wanted state (base,
+ * overlay, data) and applies it once the map is ready, so callers can set things at any time.
+ *
+ * Zoom: the app's zoom numbers come from its earlier map engine, one less than Google's for
+ * the same view. This class converts both ways, so screens never see Google's numbers.
  */
-class OgMap(context: Context, texture: Boolean = false, val interactive: Boolean = true) {
-    val view: MapView
-    var map: MapLibreMap? = null
+class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = false, val interactive: Boolean = true) {
+    private val mapView: MapView
+    /** The view to put on screen: the map plus its compass and credits. */
+    val view: FrameLayout
+    var map: GoogleMap? = null
         private set
-    private var style: Style? = null
+
+    private val density = context.resources.displayMetrics.density
+    private val compass = ImageView(context)
+    private val credits = TextView(context)
 
     private var base: Base? = null
-    private var baseSettings: com.brandonthomas.oldground.data.Settings? = null
-    private var baseUrlOrJson: Pair<String?, String?>? = null
+    private var baseTiles: TileOverlay? = null
+    private var baseKey: String? = null
+    private var background: TileOverlay? = null
+    private var backgroundColor: Int? = null
+    private var storedAerial: TileOverlay? = null
     private var overlay: Sources.Raster? = null
+    private var overlayTiles: TileOverlay? = null
     private var overlayOpacity = 1f
     private val data = HashMap<Data, FeatureCollection>()
+    private val drawn = HashMap<Data, MutableList<Any>>()
     private val images = HashMap<String, Bitmap>()
     private var pendingCam: Cam? = null
+    private var gpsMarkers: Pair<Marker, Marker>? = null
 
     var onMove: ((Cam, Boolean) -> Unit)? = null
     var onIdle: ((Cam, Boolean) -> Unit)? = null
@@ -75,68 +101,102 @@ class OgMap(context: Context, texture: Boolean = false, val interactive: Boolean
     var rotateEnabled = true
         set(v) { field = v; map?.uiSettings?.isRotateGesturesEnabled = v && interactive }
     var compassTopPx = 0
-        set(v) { field = v; applyCompass() }
+        set(v) { field = v; placeCompass() }
 
     private var userGesture = false
 
+    @SuppressLint("ClickableViewAccessibility")
+    private inner class Frame(c: Context) : FrameLayout(c) {
+        // A map you can't move doesn't take touches, so a tap reaches whatever holds it.
+        override fun dispatchTouchEvent(ev: MotionEvent?) = if (interactive) super.dispatchTouchEvent(ev) else false
+    }
+
     init {
-        EsriToken.track(this)
-        val opts = MapLibreMapOptions.createFromAttributes(context)
-            .textureMode(texture)
-            .logoEnabled(false)
-            .attributionEnabled(true)
-            .compassEnabled(interactive)
-        view = MapView(context, opts)
-        view.onCreate(null)
-        view.getMapAsync { m ->
+        val opts = GoogleMapOptions()
+            .compassEnabled(false)
+            .mapToolbarEnabled(false)
+            .zoomControlsEnabled(false)
+            .tiltGesturesEnabled(false)
+            .rotateGesturesEnabled(interactive)
+            .scrollGesturesEnabled(interactive)
+            .zoomGesturesEnabled(interactive)
+        mapView = MapView(context, opts)
+        mapView.onCreate(null)
+        view = Frame(context)
+        view.addView(mapView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        compass.setImageBitmap(compassBitmap())
+        compass.visibility = android.view.View.GONE
+        compass.setOnClickListener {
+            map?.let { m -> m.animateCamera(CameraUpdateFactory.newCameraPosition(CameraPosition.Builder(m.cameraPosition).bearing(0f).build())) }
+        }
+        view.addView(compass, FrameLayout.LayoutParams((40 * density).toInt(), (40 * density).toInt(), Gravity.TOP or Gravity.END))
+        placeCompass()
+
+        credits.textSize = 9f
+        credits.setTextColor(Color.argb(200, 30, 30, 30))
+        credits.setBackgroundColor(Color.argb(140, 255, 255, 255))
+        credits.setPadding((4 * density).toInt(), 0, (4 * density).toInt(), 0)
+        credits.visibility = android.view.View.GONE
+        view.addView(credits, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END))
+
+        mapView.getMapAsync { m ->
             map = m
-            m.uiSettings.isTiltGesturesEnabled = false
-            if (!interactive) m.uiSettings.setAllGesturesEnabled(false)
             m.uiSettings.isRotateGesturesEnabled = rotateEnabled && interactive
-            m.uiSettings.attributionGravity = Gravity.BOTTOM or Gravity.START
-            applyCompass()
-            m.addOnCameraMoveStartedListener { reason -> userGesture = reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE }
-            m.addOnCameraMoveListener { onMove?.invoke(cam(), userGesture) }
-            m.addOnCameraIdleListener {
+            m.uiSettings.isMyLocationButtonEnabled = false
+            m.uiSettings.isIndoorLevelPickerEnabled = false
+            m.isBuildingsEnabled = false
+            m.setIndoorEnabled(false)
+            runCatching { m.setMapStyle(MapStyleOptions(QUIET_STYLE)) }
+            m.setOnCameraMoveStartedListener { reason -> userGesture = reason == GoogleMap.OnCameraMoveStartedListener.REASON_GESTURE }
+            m.setOnCameraMoveListener {
+                updateCompass()
+                onMove?.invoke(cam(), userGesture)
+            }
+            m.setOnCameraIdleListener {
+                updateCompass()
                 onIdle?.invoke(cam(), userGesture)
                 userGesture = false
                 for (l in idleListeners.toList()) l()
             }
-            m.addOnMapLongClickListener { ll ->
-                onLongTap?.invoke(LngLat(ll.longitude, ll.latitude))
-                onLongTap != null
-            }
-            m.addOnMapClickListener { ll ->
-                val p = m.projection.toScreenLocation(ll)
-                val hit = runCatching {
-                    m.queryRenderedFeatures(RectF(p.x - 24, p.y - 24, p.x + 24, p.y + 24), "pins-photo", "pins-circle", "anchors-circle")
-                        .firstOrNull()?.getStringProperty("id")
-                }.getOrNull()
-                val land = if (hit != null) null else runCatching {
-                    m.queryRenderedFeatures(p, "og-land-fill").firstOrNull()?.properties()?.entrySet()
-                        ?.associate { (k, v) -> k to (if (v.isJsonNull) "" else v.asString) }
-                }.getOrNull()
-                onTap?.invoke(LngLat(ll.longitude, ll.latitude), hit, land)
-                onTap != null
+            m.setOnMapLongClickListener { ll -> onLongTap?.invoke(LngLat(ll.longitude, ll.latitude)) }
+            m.setOnMapClickListener { ll -> tapAt(LngLat(ll.longitude, ll.latitude), null) }
+            m.setOnMarkerClickListener { mk ->
+                val id = mk.tag as? String
+                tapAt(LngLat(mk.position.longitude, mk.position.latitude), id)
+                true
             }
             pendingCam?.let { setCamera(it.center, it.zoom, it.bearing) }
             pendingCam = null
-            loadBase()
+            applyBase()
+            applyOverlay()
+            for (d in Data.entries) draw(d)
             onReady?.invoke(this)
         }
     }
 
-    private fun applyCompass() {
-        val m = map ?: return
-        val d = view.resources.displayMetrics.density
-        m.uiSettings.compassGravity = Gravity.TOP or Gravity.END
-        m.uiSettings.setCompassMargins(0, compassTopPx + (8 * d).toInt(), (12 * d).toInt(), 0)
+    private fun tapAt(at: LngLat, id: String?) {
+        val land = if (id != null) null else landAt(at)
+        onTap?.invoke(at, id, land)
+    }
+
+    private fun placeCompass() {
+        val lp = compass.layoutParams as? FrameLayout.LayoutParams ?: return
+        lp.topMargin = compassTopPx + (8 * density).toInt()
+        lp.rightMargin = (12 * density).toInt()
+        compass.layoutParams = lp
+    }
+
+    private fun updateCompass() {
+        val b = map?.cameraPosition?.bearing ?: 0f
+        val show = interactive && abs(((b + 540) % 360) - 180) < 179.5f
+        compass.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
+        compass.rotation = -b
     }
 
     fun cam(): Cam {
         val c = map?.cameraPosition ?: return pendingCam ?: Cam(LngLat(0.0, 0.0), 1.0, 0.0)
-        val t = c.target ?: LatLng(0.0, 0.0)
-        return Cam(LngLat(t.longitude, t.latitude), c.zoom, c.bearing)
+        return Cam(LngLat(c.target.longitude, c.target.latitude), c.zoom - ZOOM_OFFSET, c.bearing.toDouble())
     }
 
     fun setCamera(center: LngLat, zoom: Double? = null, bearing: Double? = null) {
@@ -146,284 +206,447 @@ class OgMap(context: Context, texture: Boolean = false, val interactive: Boolean
             pendingCam = Cam(center, zoom ?: p?.zoom ?: 15.0, bearing ?: p?.bearing ?: 0.0)
             return
         }
-        val b = CameraPosition.Builder().target(LatLng(center.lat, center.lng))
-        zoom?.let { b.zoom(it) }
-        bearing?.let { b.bearing(it) }
-        m.cameraPosition = b.build()
+        val now = m.cameraPosition
+        val pos = CameraPosition(
+            LatLng(center.lat, center.lng),
+            zoom?.let { (it + ZOOM_OFFSET).toFloat() } ?: now.zoom,
+            0f,
+            bearing?.toFloat() ?: now.bearing,
+        )
+        m.moveCamera(CameraUpdateFactory.newCameraPosition(pos))
     }
 
     fun visibleBounds(): DoubleArray? {
         val b = map?.projection?.visibleRegion?.latLngBounds ?: return null
-        return doubleArrayOf(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth)
+        return doubleArrayOf(b.southwest.longitude, b.southwest.latitude, b.northeast.longitude, b.northeast.latitude)
     }
+
+    fun screenPoint(geo: LngLat): PointF? = map?.projection?.toScreenLocation(LatLng(geo.lat, geo.lng))?.let { PointF(it.x.toFloat(), it.y.toFloat()) }
 
     // ---------- base ----------
 
     fun setBase(b: Base, settings: com.brandonthomas.oldground.data.Settings) {
-        val want: Pair<String?, String?> = when (b) {
-            is Base.Geo -> when (b.layer) {
-                Layer.STREETS -> Sources.STREETS_STYLE to null
-                Layer.LIDAR -> null to Sources.rasterStyleJson(Sources.raster(Layer.LIDAR, settings, null), withAerialUnder = true)
-                Layer.TOPO -> null to Sources.rasterStyleJson(Sources.raster(b.layer, settings, null))
-                // Esri over USGS: if there's no signal, saved USGS imagery shows underneath.
-                Layer.AERIAL -> null to Sources.rasterStyleJson(Sources.raster(b.layer, settings, null), withAerialUnder = Sources.hasEsri)
-                Layer.OLDMAP -> null to Sources.rasterStyleJson(null)
-            }
-            is Base.Scan -> null to Sources.rasterStyleJson(b.raster, background = "#ddd8c8")
+        val key = when (b) {
+            is Base.Geo -> "geo-${b.layer}-" + (if (b.layer == Layer.LIDAR) Sources.raster(Layer.LIDAR, settings, null)?.id else "")
+            is Base.Scan -> "scan-${b.raster.id}-${b.raster.url}"
         }
         base = b
-        baseSettings = settings
-        if (want == baseUrlOrJson) return
-        baseUrlOrJson = want
-        loadBase()
+        if (b is Base.Geo && b.layer == Layer.LIDAR) lidarRaster = Sources.raster(Layer.LIDAR, settings, null)
+        if (key == baseKey) return
+        baseKey = key
+        applyBase()
     }
 
-    /** Rebuilds the base map (when the Esri token arrives or changes). */
-    fun refreshBase() {
-        val b = base ?: return
-        val s = baseSettings ?: return
-        setBase(b, s)
-    }
+    private var lidarRaster: Sources.Raster? = null
 
-    private fun loadBase() {
+    /** Rechecks things that depend on having signal (Satellite falls back to saved USGS imagery). */
+    fun refreshBase() = applyBase()
+
+    private fun applyBase() {
         val m = map ?: return
-        val (url, json) = baseUrlOrJson ?: return
-        val builder = if (url != null) Style.Builder().fromUri(url) else Style.Builder().fromJson(json!!)
-        style = null
-        m.setStyle(builder) { s ->
-            style = s
-            s.addImage("og-arrow", arrowBitmap())
-            for ((id, b) in images) s.addImage(id, b)
-            applyOverlay(force = true)
-            for (d in Data.entries) addDataLayer(s, d)
+        val b = base ?: return
+        baseTiles?.remove(); baseTiles = null
+        storedAerial?.remove(); storedAerial = null
+        var bg: Int? = null
+        var tiles: Sources.Raster? = null
+        when (b) {
+            is Base.Geo -> when (b.layer) {
+                Layer.STREETS -> m.mapType = GoogleMap.MAP_TYPE_NORMAL
+                Layer.AERIAL -> m.mapType = GoogleMap.MAP_TYPE_SATELLITE
+                Layer.TOPO -> { m.mapType = GoogleMap.MAP_TYPE_NONE; bg = BG; tiles = Sources.raster(Layer.TOPO, com.brandonthomas.oldground.data.Settings(), null) }
+                Layer.LIDAR -> { m.mapType = GoogleMap.MAP_TYPE_SATELLITE; tiles = lidarRaster }
+                Layer.OLDMAP -> { m.mapType = GoogleMap.MAP_TYPE_NONE; bg = BG }
+            }
+            is Base.Scan -> { m.mapType = GoogleMap.MAP_TYPE_NONE; bg = SCAN_BG; tiles = b.raster }
         }
+        setBackground(bg)
+        tiles?.let { r -> baseTiles = m.addTileOverlay(TileOverlayOptions().tileProvider(Tiles.Provider(r)).zIndex(Z_BASE).fadeIn(false)) }
+        // Without signal Google's imagery can't load: show saved USGS imagery instead.
+        val satellite = b is Base.Geo && (b.layer == Layer.AERIAL || b.layer == Layer.LIDAR)
+        if (satellite && !Tiles.online()) {
+            storedAerial = m.addTileOverlay(TileOverlayOptions().tileProvider(Tiles.Provider(Sources.usgsAerial, storedOnly = true)).zIndex(Z_BASE - 1).fadeIn(false))
+        }
+        updateCredits()
     }
 
-    // ---------- overlay raster ----------
+    private fun setBackground(color: Int?) {
+        if (color == backgroundColor && (color == null) == (background == null)) return
+        background?.remove(); background = null
+        backgroundColor = color
+        val m = map ?: return
+        if (color != null) background = m.addTileOverlay(TileOverlayOptions().tileProvider(SolidTiles(color)).zIndex(Z_BG).fadeIn(false))
+    }
+
+    private fun updateCredits() {
+        val usgs = listOfNotNull(
+            (base as? Base.Geo)?.let { g -> if (g.layer == Layer.TOPO || storedAerial != null) Sources.USGS_ATTRIB else if (g.layer == Layer.LIDAR) "USGS 3DEP" else null },
+            overlay?.attribution?.takeIf { it.isNotEmpty() },
+        ).distinct()
+        credits.text = usgs.joinToString(" · ")
+        credits.visibility = if (usgs.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+    }
+
+    // ---------- overlay ----------
 
     fun setOverlay(r: Sources.Raster?, opacity: Float = 1f) {
-        val changed = r?.id != overlay?.id
+        val changed = r != overlay
         overlay = r
         overlayOpacity = opacity
-        applyOverlay(force = changed)
+        if (changed) applyOverlay() else overlayTiles?.transparency = 1f - opacity
     }
 
-    private fun applyOverlay(force: Boolean) {
-        val s = style ?: return
-        if (force) {
-            for (id in listOf("ov", "ov-under")) {
-                s.getLayer(id)?.let { s.removeLayer(it) }
-                s.getSource(id)?.let { s.removeSource(it) }
-            }
-            val r = overlay ?: return
-            // Esri satellite only loads when zoomed in; free USGS imagery fills in below that.
-            val under = if (r.id == "esri") Sources.usgsAerial else null
-            val ts = TileSet("2.2.0", r.url).apply {
-                minZoom = r.minZoom
-                maxZoom = r.maxZoom
-                // No setBounds: in MapLibre 11.6 it calls itself forever (stack overflow).
-                if (r.attribution.isNotEmpty()) attribution = r.attribution
-            }
-            s.addSource(RasterSource("ov", ts, 256))
-            val layer = RasterLayer("ov", "ov").withProperties(
-                PropertyFactory.rasterOpacity(overlayOpacity),
-                PropertyFactory.rasterFadeDuration(0f),
+    private fun applyOverlay() {
+        val m = map ?: return
+        overlayTiles?.remove(); overlayTiles = null
+        val r = overlay
+        if (r != null) {
+            overlayTiles = m.addTileOverlay(
+                TileOverlayOptions().tileProvider(Tiles.Provider(r)).zIndex(Z_OVERLAY).transparency(1f - overlayOpacity).fadeIn(false),
             )
-            // Below the app's own data (tracks, pins…), above the base map.
-            val firstData = s.layers.firstOrNull { it.id.startsWith("og-") }
-            if (firstData != null) s.addLayerBelow(layer, firstData.id) else s.addLayer(layer)
-            if (under != null) {
-                val uts = TileSet("2.2.0", under.url).apply { maxZoom = under.maxZoom; attribution = under.attribution }
-                s.addSource(RasterSource("ov-under", uts, 256))
-                // Hidden from the Esri zoom up, so the two never stack (the opacity slider stays true).
-                val underLayer = RasterLayer("ov-under", "ov-under").withProperties(
-                    PropertyFactory.rasterOpacity(overlayOpacity), PropertyFactory.rasterFadeDuration(0f),
-                )
-                underLayer.maxZoom = Sources.ESRI_MIN_ZOOM
-                s.addLayerBelow(underLayer, "ov")
-            }
-        } else {
-            for (id in listOf("ov", "ov-under")) (s.getLayer(id) as? RasterLayer)?.setProperties(PropertyFactory.rasterOpacity(overlayOpacity))
         }
+        updateCredits()
     }
 
     // ---------- images (photo pins) ----------
 
     fun hasImage(id: String) = id in images
 
-    /** Adds map images by id (kept across style reloads). */
+    /** Adds map images by id (pin photos). */
     fun addImages(add: Map<String, Bitmap>) {
         val fresh = add.filterKeys { it !in images }
         if (fresh.isEmpty()) return
         images.putAll(fresh)
-        style?.let { s -> for ((id, b) in fresh) s.addImage(id, b) }
+        draw(Data.PINS)
     }
 
-    // ---------- data layers ----------
+    // ---------- data ----------
 
     fun setData(d: Data, fc: FeatureCollection) {
         data[d] = fc
-        (style?.getSource("og-src-${d.name}") as? GeoJsonSource)?.setGeoJson(fc)
+        draw(d)
     }
 
-    private fun addDataLayer(s: Style, d: Data) {
-        val src = GeoJsonSource("og-src-${d.name}", data[d] ?: FeatureCollection.fromFeatures(emptyList()))
-        s.addSource(src)
-        val sid = src.id
-        val get = { k: String -> Expression.get(k) }
-        when (d) {
-            Data.LAND -> {
-                val color = Expression.match(
-                    get("Mang_Type"), Expression.color(android.graphics.Color.parseColor("#F57C00")),
-                    Expression.stop("FED", Expression.color(android.graphics.Color.parseColor("#2E8B57"))),
-                    Expression.stop("STAT", Expression.color(android.graphics.Color.parseColor("#1E73BE"))),
-                    Expression.stop("LOC", Expression.color(android.graphics.Color.parseColor("#8E44AD"))),
-                    Expression.stop("TRIB", Expression.color(android.graphics.Color.parseColor("#8D6E63"))),
-                    Expression.stop("DIST", Expression.color(android.graphics.Color.parseColor("#00897B"))),
-                )
-                s.addLayer(FillLayer("og-land-fill", sid).withProperties(PropertyFactory.fillColor(color), PropertyFactory.fillOpacity(0.16f)))
-                s.addLayer(LineLayer("og-land-line", sid).withProperties(PropertyFactory.lineColor(color), PropertyFactory.lineWidth(2f), PropertyFactory.lineOpacity(0.9f)))
-            }
-            Data.SITES -> {
-                s.addLayer(FillLayer("og-sites-fill", sid).withProperties(PropertyFactory.fillColor("#0f766e"), PropertyFactory.fillOpacity(0.10f)))
-                s.addLayer(LineLayer("og-sites-halo", sid).withProperties(PropertyFactory.lineColor("#ffffff"), PropertyFactory.lineWidth(4.5f), PropertyFactory.lineOpacity(0.8f)))
-                s.addLayer(LineLayer("og-sites-line", sid).withProperties(PropertyFactory.lineColor("#0f766e"), PropertyFactory.lineWidth(2.5f)))
-                s.addLayer(
-                    SymbolLayer("og-sites-label", sid).withProperties(
-                        PropertyFactory.textField(get("name")), PropertyFactory.textFont(arrayOf(Sources.FONT)), PropertyFactory.textSize(12f),
-                        PropertyFactory.textColor("#0b5a54"), PropertyFactory.textHaloColor("#ffffff"), PropertyFactory.textHaloWidth(1.6f),
-                        PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_POINT), PropertyFactory.textOptional(true),
-                    ),
-                )
-            }
-            Data.DRAFT -> {
-                val isCorner = Expression.eq(Expression.geometryType(), Expression.literal("Point"))
-                s.addLayer(FillLayer("og-draft-fill", sid).withProperties(PropertyFactory.fillColor("#0f766e"), PropertyFactory.fillOpacity(0.22f)).withFilter(Expression.eq(Expression.geometryType(), Expression.literal("Polygon"))))
-                s.addLayer(LineLayer("og-draft-halo", sid).withProperties(PropertyFactory.lineColor("#ffffff"), PropertyFactory.lineWidth(5f)).withFilter(Expression.not(isCorner)))
-                s.addLayer(LineLayer("og-draft-line", sid).withProperties(PropertyFactory.lineColor("#0f766e"), PropertyFactory.lineWidth(3f), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)).withFilter(Expression.not(isCorner)))
-                s.addLayer(
-                    CircleLayer("og-draft-corner", sid).withProperties(
-                        PropertyFactory.circleRadius(Expression.switchCase(Expression.has("last"), Expression.literal(10f), Expression.literal(8f))),
-                        PropertyFactory.circleColor(Expression.switchCase(Expression.has("last"), Expression.color(android.graphics.Color.parseColor("#0f766e")), Expression.color(android.graphics.Color.WHITE))),
-                        PropertyFactory.circleStrokeColor(Expression.switchCase(Expression.has("last"), Expression.color(android.graphics.Color.WHITE), Expression.color(android.graphics.Color.parseColor("#0f766e")))),
-                        PropertyFactory.circleStrokeWidth(3f),
-                    ).withFilter(isCorner),
-                )
-            }
-            Data.GUIDE -> s.addLayer(
-                LineLayer("og-guide", sid).withProperties(
-                    PropertyFactory.lineColor("#0f766e"), PropertyFactory.lineWidth(3f),
-                    PropertyFactory.lineDasharray(arrayOf(1.5f, 1.5f)), PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                ),
-            )
-            Data.TRACKS -> s.addLayer(
-                LineLayer("og-tracks", sid).withProperties(
-                    PropertyFactory.lineColor(Expression.toColor(get("c"))), PropertyFactory.lineWidth(Expression.toNumber(get("w"))), PropertyFactory.lineOpacity(Expression.toNumber(get("o"))),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND), PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                ),
-            )
-            Data.MESH -> s.addLayer(
-                LineLayer("og-mesh", sid).withProperties(
-                    PropertyFactory.lineColor(Expression.toColor(get("color"))), PropertyFactory.lineWidth(Expression.toNumber(get("w"))),
-                ),
-            )
-            Data.ANCHORS -> s.addLayer(
-                CircleLayer("anchors-circle", sid).withProperties(
-                    PropertyFactory.circleRadius(Expression.toNumber(get("r"))),
-                    PropertyFactory.circleColor(Expression.toColor(get("color"))),
-                    PropertyFactory.circleStrokeColor("#ffffff"), PropertyFactory.circleStrokeWidth(2f),
-                ),
-            )
-            Data.PINS -> {
-                val hasPhoto = Expression.has("photo")
-                s.addLayer(
-                    CircleLayer("pins-circle", sid).withProperties(
-                        PropertyFactory.circleRadius(8f), PropertyFactory.circleColor(Expression.toColor(get("color"))),
-                        PropertyFactory.circleStrokeColor("#ffffff"), PropertyFactory.circleStrokeWidth(2.5f),
-                    ).withFilter(Expression.not(hasPhoto)),
-                )
-                // Pins with a photo show it as a round thumbnail.
-                s.addLayer(
-                    SymbolLayer("pins-photo", sid).withProperties(
-                        PropertyFactory.iconImage(get("photo")), PropertyFactory.iconAllowOverlap(true),
-                        PropertyFactory.iconIgnorePlacement(true),
-                    ).withFilter(hasPhoto),
-                )
-                s.addLayer(
-                    SymbolLayer("og-pins-label", sid).withProperties(
-                        PropertyFactory.textField(get("name")), PropertyFactory.textFont(arrayOf(Sources.FONT)),
-                        PropertyFactory.textSize(13f),
-                        PropertyFactory.textOffset(Expression.switchCase(hasPhoto, Expression.literal(arrayOf(0f, 1.9f)), Expression.literal(arrayOf(0f, 1.3f)))),
-                        PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP), PropertyFactory.textColor("#1f2622"),
-                        PropertyFactory.textHaloColor("#ffffff"), PropertyFactory.textHaloWidth(1.6f), PropertyFactory.textOptional(true),
-                    ),
-                )
-            }
-            Data.GHOST -> {
-                s.addLayer(
-                    CircleLayer("og-ghost-halo", sid).withProperties(
-                        PropertyFactory.circleRadius(15f), PropertyFactory.circleColor("rgba(0,0,0,0)"),
-                        PropertyFactory.circleStrokeColor("#ffffff"), PropertyFactory.circleStrokeWidth(5f),
-                    ),
-                )
-                s.addLayer(
-                    CircleLayer("og-ghost", sid).withProperties(
-                        PropertyFactory.circleRadius(15f), PropertyFactory.circleColor("rgba(0,0,0,0)"),
-                        PropertyFactory.circleStrokeColor(Expression.toColor(get("color"))), PropertyFactory.circleStrokeWidth(2.5f),
-                    ),
-                )
-            }
-            Data.GPS -> {
-                s.addLayer(
-                    CircleLayer("og-gps-halo", sid).withProperties(
-                        PropertyFactory.circleRadius(22f), PropertyFactory.circleColor("rgba(26,115,232,0.22)"),
-                    ),
-                )
-                s.addLayer(
-                    SymbolLayer("og-gps-arrow", sid).withProperties(
-                        PropertyFactory.iconImage("og-arrow"), PropertyFactory.iconRotate(Expression.toNumber(get("heading"))),
-                        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
-                        PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true),
-                        PropertyFactory.iconOpacity(Expression.toNumber(get("hasHeading"))),
-                    ),
-                )
-                s.addLayer(
-                    CircleLayer("og-gps", sid).withProperties(
-                        PropertyFactory.circleRadius(7f), PropertyFactory.circleColor("#1a73e8"),
-                        PropertyFactory.circleStrokeColor("#ffffff"), PropertyFactory.circleStrokeWidth(3f),
-                    ),
-                )
+    private fun clear(d: Data) {
+        drawn.remove(d)?.forEach {
+            when (it) {
+                is Marker -> it.remove()
+                is Polyline -> it.remove()
+                is GPolygon -> it.remove()
             }
         }
     }
 
+    private fun draw(d: Data) {
+        val m = map ?: return
+        if (d == Data.GPS) return drawGps(m)
+        clear(d)
+        val fc = data[d] ?: return
+        val out = ArrayList<Any>()
+        val z = Z_DATA + d.ordinal
+        for (f in fc.features()) when (d) {
+            Data.LAND -> {
+                val color = landColor(f.string("Mang_Type"))
+                for (p in polygons(f.geometry)) out.add(m.addPolygon(polygonOptions(p).fillColor(alpha(color, 0.16f)).strokeColor(alpha(color, 0.9f)).strokeWidth(2 * density).zIndex(z)))
+            }
+            Data.SITES -> for (p in polygons(f.geometry)) {
+                out.add(m.addPolygon(polygonOptions(p).fillColor(alpha(TEAL, 0.10f)).strokeWidth(0f).zIndex(z)))
+                out.add(m.addPolyline(PolylineOptions().addAll(ll(p.rings.first())).color(alpha(Color.WHITE, 0.8f)).width(4.5f * density).zIndex(z)))
+                out.add(m.addPolyline(PolylineOptions().addAll(ll(p.rings.first())).color(TEAL).width(2.5f * density).zIndex(z + 0.1f)))
+                val name = f.string("name").orEmpty()
+                if (name.isNotEmpty()) centroid(p.rings.first())?.let { c ->
+                    out.add(m.addMarker(MarkerOptions().position(c).icon(icon("label|$name") { textBitmap(name, 12f, Color.parseColor("#0b5a54")) }).anchor(0.5f, 0.5f).zIndex(z))!!)
+                }
+            }
+            Data.DRAFT -> when (val g = f.geometry) {
+                is Polygon -> {
+                    out.add(m.addPolygon(polygonOptions(g).fillColor(alpha(TEAL, 0.22f)).strokeWidth(0f).zIndex(z)))
+                    out.add(m.addPolyline(PolylineOptions().addAll(ll(g.rings.first())).color(Color.WHITE).width(5 * density).zIndex(z)))
+                    out.add(m.addPolyline(PolylineOptions().addAll(ll(g.rings.first())).color(TEAL).width(3 * density).jointType(JointType.ROUND).zIndex(z + 0.1f)))
+                }
+                is LineString -> {
+                    out.add(m.addPolyline(PolylineOptions().addAll(ll(g.points)).color(Color.WHITE).width(5 * density).zIndex(z)))
+                    out.add(m.addPolyline(PolylineOptions().addAll(ll(g.points)).color(TEAL).width(3 * density).zIndex(z + 0.1f)))
+                }
+                is Point -> {
+                    val last = f.boolean("last") == true
+                    val ic = if (last) icon("corner-last") { circleBitmap(10f, TEAL, Color.WHITE, 3f) } else icon("corner") { circleBitmap(8f, Color.WHITE, TEAL, 3f) }
+                    out.add(m.addMarker(MarkerOptions().position(LatLng(g.lat, g.lng)).icon(ic).anchor(0.5f, 0.5f).zIndex(z))!!)
+                }
+                else -> {}
+            }
+            Data.GUIDE -> (f.geometry as? LineString)?.let { g ->
+                out.add(m.addPolyline(PolylineOptions().addAll(ll(g.points)).color(TEAL).width(3 * density).pattern(listOf(Dash(4.5f * density), Gap(4.5f * density))).zIndex(z)))
+            }
+            Data.TRACKS -> (f.geometry as? LineString)?.let { g ->
+                val color = alpha(parseColor(f.string("c") ?: "#ff6d00"), (f.number("o") ?: 0.85).toFloat())
+                out.add(
+                    m.addPolyline(
+                        PolylineOptions().addAll(ll(g.points)).color(color).width(((f.number("w") ?: 3.0) * density).toFloat())
+                            .jointType(JointType.ROUND).startCap(RoundCap()).endCap(RoundCap()).zIndex(z),
+                    ),
+                )
+            }
+            Data.MESH -> (f.geometry as? LineString)?.let { g ->
+                out.add(m.addPolyline(PolylineOptions().addAll(ll(g.points)).color(parseColor(f.string("color") ?: "#1e5ac8")).width(((f.number("w") ?: 1.2) * density).toFloat()).zIndex(z)))
+            }
+            Data.ANCHORS -> (f.geometry as? Point)?.let { g ->
+                val color = parseColor(f.string("color") ?: "#1e5ac8")
+                val r = (f.number("r") ?: 7.0).toFloat()
+                val mk = m.addMarker(MarkerOptions().position(LatLng(g.lat, g.lng)).icon(icon("anchor|$color|$r") { circleBitmap(r, color, Color.WHITE, 2f) }).anchor(0.5f, 0.5f).zIndex(z))!!
+                mk.tag = f.string("id")
+                out.add(mk)
+            }
+            Data.PINS -> (f.geometry as? Point)?.let { g ->
+                val name = f.string("name").orEmpty()
+                val photo = f.string("photo")?.let { images[it] }
+                val color = parseColor(f.string("color") ?: "#D4A017")
+                val spec = "pin|$color|${f.string("photo").takeIf { photo != null }}|$name"
+                val (ic, anchorY) = pinIcons.getOrPut(spec) { pinBitmap(photo, color, name).let { (b, a) -> BitmapDescriptorFactory.fromBitmap(b) to a } }
+                val mk = m.addMarker(MarkerOptions().position(LatLng(g.lat, g.lng)).icon(ic).anchor(0.5f, anchorY).zIndex(z))!!
+                mk.tag = f.string("id")
+                out.add(mk)
+            }
+            Data.GHOST -> (f.geometry as? Point)?.let { g ->
+                val color = parseColor(f.string("color") ?: "#0f766e")
+                out.add(m.addMarker(MarkerOptions().position(LatLng(g.lat, g.lng)).icon(icon("ghost|$color") { ghostBitmap(color) }).anchor(0.5f, 0.5f).zIndex(z))!!)
+            }
+            Data.GPS -> {}
+        }
+        drawn[d] = out
+    }
+
+    /** The GPS dot moves often, so its markers are moved rather than redrawn. */
+    private fun drawGps(m: GoogleMap) {
+        val f = data[Data.GPS]?.features()?.firstOrNull()
+        val g = f?.geometry as? Point
+        if (g == null) {
+            gpsMarkers?.let { (a, b) -> a.remove(); b.remove() }
+            gpsMarkers = null
+            return
+        }
+        val at = LatLng(g.lat, g.lng)
+        val heading = (f.number("heading") ?: 0.0).toFloat()
+        val hasHeading = (f.number("hasHeading") ?: 0.0) > 0.5
+        val existing = gpsMarkers
+        if (existing == null) {
+            val arrow = m.addMarker(MarkerOptions().position(at).icon(icon("gps-arrow") { arrowBitmap() }).anchor(0.5f, 0.5f).flat(true).rotation(heading).visible(hasHeading).zIndex(Z_DATA + 20))!!
+            val dot = m.addMarker(MarkerOptions().position(at).icon(icon("gps-dot") { gpsBitmap() }).anchor(0.5f, 0.5f).zIndex(Z_DATA + 21))!!
+            gpsMarkers = arrow to dot
+        } else {
+            val (arrow, dot) = existing
+            arrow.position = at; arrow.rotation = heading; arrow.isVisible = hasHeading
+            dot.position = at
+        }
+    }
+
+    // ---------- public land under a tap ----------
+
+    private fun landAt(at: LngLat): Map<String, String>? {
+        val fc = data[Data.LAND] ?: return null
+        for (f in fc.features()) for (p in polygons(f.geometry)) {
+            if (inside(p.rings.first(), at) && p.rings.drop(1).none { inside(it, at) }) return f.propertyStrings()
+        }
+        return null
+    }
+
+    private fun inside(ring: List<Point>, g: LngLat): Boolean {
+        var c = false
+        var j = ring.size - 1
+        for (i in ring.indices) {
+            val a = ring[i]; val b = ring[j]
+            if ((a.lat > g.lat) != (b.lat > g.lat) && g.lng < (b.lng - a.lng) * (g.lat - a.lat) / (b.lat - a.lat) + a.lng) c = !c
+            j = i
+        }
+        return c
+    }
+
+    // ---------- drawing helpers ----------
+
+    private fun polygons(g: Geometry?): List<Polygon> = when (g) {
+        is Polygon -> listOf(g)
+        is MultiPolygon -> g.polygons
+        else -> emptyList()
+    }
+
+    private fun ll(pts: List<Point>) = pts.map { LatLng(it.lat, it.lng) }
+
+    private fun polygonOptions(p: Polygon): PolygonOptions {
+        val o = PolygonOptions().addAll(ll(p.rings.first()))
+        for (h in p.rings.drop(1)) if (h.size >= 3) o.addHole(ll(h))
+        return o
+    }
+
+    private fun centroid(ring: List<Point>): LatLng? {
+        if (ring.isEmpty()) return null
+        return LatLng(ring.sumOf { it.lat } / ring.size, ring.sumOf { it.lng } / ring.size)
+    }
+
+    private val icons = HashMap<String, BitmapDescriptor>()
+    private val pinIcons = HashMap<String, Pair<BitmapDescriptor, Float>>()
+    private fun icon(key: String, make: () -> Bitmap): BitmapDescriptor = icons.getOrPut(key) { BitmapDescriptorFactory.fromBitmap(make()) }
+
+    private fun circleBitmap(radiusDp: Float, fill: Int, stroke: Int, strokeDp: Float): Bitmap {
+        val r = radiusDp * density
+        val s = strokeDp * density
+        val size = (2 * (r + s) + 2).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = stroke; c.drawCircle(size / 2f, size / 2f, r + s / 2, p)
+        p.color = fill; c.drawCircle(size / 2f, size / 2f, r - s / 2, p)
+        return bmp
+    }
+
+    private fun ghostBitmap(color: Int): Bitmap {
+        val r = 15 * density
+        val size = (2 * r + 8 * density).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+        p.color = Color.WHITE; p.strokeWidth = 5 * density; c.drawCircle(size / 2f, size / 2f, r, p)
+        p.color = color; p.strokeWidth = 2.5f * density; c.drawCircle(size / 2f, size / 2f, r, p)
+        return bmp
+    }
+
+    private fun gpsBitmap(): Bitmap {
+        val halo = 22 * density
+        val size = (2 * halo).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = Color.argb(56, 26, 115, 232); c.drawCircle(size / 2f, size / 2f, halo, p)
+        p.color = Color.WHITE; c.drawCircle(size / 2f, size / 2f, 8.5f * density, p)
+        p.color = Color.rgb(26, 115, 232); c.drawCircle(size / 2f, size / 2f, 5.5f * density, p)
+        return bmp
+    }
+
     private fun arrowBitmap(): Bitmap {
-        val d = view.resources.displayMetrics.density
-        val size = (64 * d).toInt()
+        val size = (64 * density).toInt()
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val p = Path().apply {
             moveTo(size / 2f, size * 0.02f)
-            lineTo(size / 2f + 10 * d, size / 2f - 8 * d)
-            lineTo(size / 2f - 10 * d, size / 2f - 8 * d)
+            lineTo(size / 2f + 10 * density, size / 2f - 8 * density)
+            lineTo(size / 2f - 10 * density, size / 2f - 8 * density)
             close()
         }
         c.drawPath(p, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(26, 115, 232) })
         return bmp
     }
 
+    private fun compassBitmap(): Bitmap {
+        val size = (40 * density).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = Color.WHITE; c.drawCircle(size / 2f, size / 2f, size / 2f - density, p)
+        val cx = size / 2f; val cy = size / 2f
+        p.color = Color.rgb(192, 57, 43)
+        c.drawPath(Path().apply { moveTo(cx, cy - 13 * density); lineTo(cx + 5 * density, cy); lineTo(cx - 5 * density, cy); close() }, p)
+        p.color = Color.rgb(120, 130, 128)
+        c.drawPath(Path().apply { moveTo(cx, cy + 13 * density); lineTo(cx + 5 * density, cy); lineTo(cx - 5 * density, cy); close() }, p)
+        return bmp
+    }
+
+    private fun textPaint(sizeSp: Float, color: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = sizeSp * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        this.color = color
+        textAlign = Paint.Align.CENTER
+    }
+
+    /** Text with a white halo, like the map's own labels. */
+    private fun textBitmap(text: String, sizeSp: Float, color: Int): Bitmap {
+        val fill = textPaint(sizeSp, color)
+        val halo = textPaint(sizeSp, Color.WHITE).apply { style = Paint.Style.STROKE; strokeWidth = 3.2f * density; strokeJoin = Paint.Join.ROUND }
+        val w = (fill.measureText(text) + 8 * density).toInt().coerceAtLeast(1)
+        val h = (fill.textSize * 1.5f).toInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val y = h / 2f - (fill.descent() + fill.ascent()) / 2
+        c.drawText(text, w / 2f, y, halo)
+        c.drawText(text, w / 2f, y, fill)
+        return bmp
+    }
+
+    /** A pin (its photo, or a coloured dot) with its name underneath. Returns the image and where the pin's centre sits (0..1 down it). */
+    private fun pinBitmap(photo: Bitmap?, color: Int, name: String): Pair<Bitmap, Float> {
+        val mark = photo ?: circleBitmap(8f, color, Color.WHITE, 2.5f)
+        val label = name.takeIf { it.isNotEmpty() }?.let { textBitmap(it, 13f, Color.parseColor("#1f2622")) }
+        val w = maxOf(mark.width, label?.width ?: 0)
+        val h = mark.height + (label?.height ?: 0)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawBitmap(mark, (w - mark.width) / 2f, 0f, null)
+        label?.let { c.drawBitmap(it, (w - it.width) / 2f, mark.height.toFloat(), null) }
+        return bmp to (mark.height / 2f) / h
+    }
+
+    private fun landColor(type: String?) = Color.parseColor(
+        when (type) {
+            "FED" -> "#2E8B57"
+            "STAT" -> "#1E73BE"
+            "LOC" -> "#8E44AD"
+            "TRIB" -> "#8D6E63"
+            "DIST" -> "#00897B"
+            else -> "#F57C00"
+        },
+    )
+
+    private fun alpha(color: Int, a: Float) = Color.argb((Color.alpha(color) * a).toInt().coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+
+    private fun parseColor(s: String): Int = runCatching {
+        val t = s.trim()
+        if (t.startsWith("rgba(") || t.startsWith("rgb(")) {
+            val v = t.substringAfter('(').substringBefore(')').split(',').map { it.trim().toFloat() }
+            Color.argb(((v.getOrNull(3) ?: 1f) * 255).toInt(), v[0].toInt(), v[1].toInt(), v[2].toInt())
+        } else Color.parseColor(t)
+    }.getOrDefault(Color.GRAY)
+
+    /** A plain colour under tile layers (Topo, old maps), where Google draws no map. */
+    private class SolidTiles(color: Int) : TileProvider {
+        private val bytes: ByteArray = run {
+            val b = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+            b.eraseColor(color)
+            val o = ByteArrayOutputStream()
+            b.compress(Bitmap.CompressFormat.PNG, 100, o)
+            o.toByteArray()
+        }
+        override fun getTile(x: Int, y: Int, zoom: Int) = Tile(256, 256, bytes)
+    }
+
     // ---------- lifecycle ----------
 
-    fun onStart() = view.onStart()
-    fun onResume() = view.onResume()
-    fun onPause() = view.onPause()
-    fun onStop() = view.onStop()
+    fun onStart() = mapView.onStart()
+    fun onResume() {
+        mapView.onResume()
+        // Signal may have come or gone while away.
+        if (base != null) applyBase()
+    }
+    fun onPause() = mapView.onPause()
+    fun onStop() = mapView.onStop()
     fun onDestroy() {
         onMove = null; onIdle = null; onTap = null; onLongTap = null; onReady = null
         idleListeners.clear()
-        view.onDestroy()
+        mapView.onDestroy()
     }
-    fun onLowMemory() = view.onLowMemory()
+    fun onLowMemory() = mapView.onLowMemory()
 
-    fun screenPoint(geo: LngLat): PointF? = map?.projection?.toScreenLocation(LatLng(geo.lat, geo.lng))
+    companion object {
+        const val ZOOM_OFFSET = 1.0
+        private val TEAL = Color.parseColor("#0f766e")
+        private val BG = Color.parseColor("#e9e6dc")
+        private val SCAN_BG = Color.parseColor("#ddd8c8")
+        private const val Z_BG = -30f
+        private const val Z_BASE = -20f
+        private const val Z_OVERLAY = -10f
+        private const val Z_DATA = 0f
+
+        /** Streets without shops, businesses and transit icons, which only clutter a detecting map. */
+        private const val QUIET_STYLE = """[
+            {"featureType":"poi.business","stylers":[{"visibility":"off"}]},
+            {"featureType":"poi.attraction","elementType":"labels.icon","stylers":[{"visibility":"off"}]},
+            {"featureType":"transit","elementType":"labels.icon","stylers":[{"visibility":"off"}]}
+        ]"""
+    }
 }

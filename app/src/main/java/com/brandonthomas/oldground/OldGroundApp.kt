@@ -3,7 +3,6 @@ package com.brandonthomas.oldground
 import android.app.Application
 import com.brandonthomas.oldground.data.Repo
 import com.brandonthomas.oldground.map.TileJobs
-import org.maplibre.android.MapLibre
 
 class OldGroundApp : Application() {
     override fun onCreate() {
@@ -23,9 +22,8 @@ class OldGroundApp : Application() {
             }
             previous?.uncaughtException(thread, e)
         }
-        MapLibre.getInstance(this)
         Repo.init(this)
-        com.brandonthomas.oldground.map.EsriToken.refresh(this)
+        com.brandonthomas.oldground.map.Tiles.init(this)
         com.brandonthomas.oldground.community.Community.init(this)
         // Finish any map tiles that were still being built when the app last closed.
         TileJobs.resumeAll(this)

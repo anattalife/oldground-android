@@ -5,11 +5,6 @@ import com.brandonthomas.oldground.data.Site
 import com.brandonthomas.oldground.data.TrackPt
 import com.brandonthomas.oldground.geo.LngLat
 import com.brandonthomas.oldground.location.Fix
-import org.maplibre.geojson.Feature
-import org.maplibre.geojson.FeatureCollection
-import org.maplibre.geojson.LineString
-import org.maplibre.geojson.Point
-import org.maplibre.geojson.Polygon
 
 /**
  * Builds map features. [place] turns a real-world position into the map's own frame:

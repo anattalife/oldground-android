@@ -214,7 +214,7 @@ fun HuntScreen(
     fun slot(k: Slot): Layer {
         chosen[k]?.let { if (it != Layer.OLDMAP || hasOld) return it }
         if (hasOld && k.primary) return Layer.OLDMAP
-        return settings.slots[k] ?: k.default
+        return settings.slots[k]?.takeIf { it in k.options } ?: k.default
     }
     fun choose(k: Slot, l: Layer) {
         chosen[k] = l
@@ -375,44 +375,38 @@ fun HuntScreen(
 
                 Mode.SWIPE -> {
                     val lower = rememberOgMap("swipe-lower")
-                    val upper = rememberOgMap("swipe-upper", texture = true, interactive = false)
+                    val upper = remember { com.brandonthomas.oldground.map.SwipeLayer(ctx) }
                     val left = slot(Slot.SWIPE_LEFT)
                     val right = slot(Slot.SWIPE_RIGHT)
                     LaunchedEffect(Unit) {
                         lower.compassTopPx = compassTop
                         lower.rotateEnabled = false
-                        startCam().let {
-                            lower.setCamera(it.center, it.zoom, 0.0)
-                            upper.setCamera(it.center, it.zoom, 0.0)
-                        }
+                        startCam().let { lower.setCamera(it.center, it.zoom, 0.0) }
+                        upper.source = lower
                     }
                     LaunchedEffect(right, settings.lidarStyle, settings.lidarAzimuth) { lower.setBase(Base.Geo(right, lidarKey(settings)), settings) }
-                    LaunchedEffect(left, right, settings, map?.warp?.zDone, map?.warp?.dir) {
-                        if (left == Layer.STREETS) {
-                            upper.setBase(Base.Geo(Layer.STREETS), settings)
-                            upper.setOverlay(null)
-                        } else {
-                            upper.setBase(Base.Geo(right, lidarKey(settings)), settings)
-                            upper.setOverlay(Sources.raster(left, settings, map), 1f)
-                        }
+                    // The left side is drawn as tiles (Google's own map can't be cut at the divider).
+                    LaunchedEffect(left, settings, map?.warp?.zDone, map?.warp?.dir) { upper.raster = Sources.raster(left, settings, map) }
+                    LaunchedEffect(data.pins, fix) {
+                        upper.pins = data.pins.map { it.geo to android.graphics.Color.parseColor(it.kind.color) }
+                        upper.gps = fix?.geo
                     }
                     LiveMap("main", lower, null, live)
-                    LiveMap("upper", upper, null, live)
                     SideEffect {
                         lower.onTap = onTapAt(null)
                         lower.onLongTap = onLongAt(null)
                         lower.onMove = { c, user ->
-                            upper.setCamera(c.center, c.zoom, c.bearing)
+                            upper.refresh()
                             rememberCam(c, null)
                             if (user) { follow = false; userTookOver[0] = true }
                         }
-                        lower.onIdle = { c, _ -> upper.setCamera(c.center, c.zoom, c.bearing) }
+                        lower.onIdle = { _, _ -> upper.refresh() }
                     }
                     BoxWithConstraints(Modifier.fillMaxSize()) {
                         val widthPx = constraints.maxWidth
                         var dividerPx by remember { mutableFloatStateOf(widthPx / 2f) }
                         AndroidView(
-                            factory = { SwipeFrame(it, lower.view, upper.view) },
+                            factory = { SwipeFrame(it, lower.view, upper) },
                             update = { it.setDivider(dividerPx.roundToInt()) },
                             modifier = Modifier.fillMaxSize(),
                         )

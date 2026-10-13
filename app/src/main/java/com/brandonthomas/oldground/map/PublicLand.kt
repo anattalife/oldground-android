@@ -5,8 +5,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.maplibre.geojson.Feature
-import org.maplibre.geojson.FeatureCollection
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -73,7 +71,7 @@ object PublicLand {
         val out = ArrayList<Feature>()
         for ((x, y) in list) for (f in load(ctx, x, y)) {
             // The same piece of land comes back in every square it touches; keep one.
-            val id = runCatching { f.getProperty("OBJECTID")?.asString }.getOrNull() ?: f.id() ?: f.toJson().hashCode().toString()
+            val id = f.string("OBJECTID") ?: f.id() ?: f.toJson().hashCode().toString()
             if (seen.add(id)) out.add(f)
         }
         FeatureCollection.fromFeatures(out)

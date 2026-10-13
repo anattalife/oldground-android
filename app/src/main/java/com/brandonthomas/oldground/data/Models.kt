@@ -165,7 +165,7 @@ enum class LidarStyle(val label: String) { STRETCH("Stretched"), MULTI("Multi"),
 enum class Slot(val title: String, val default: Layer, val options: List<Layer>, val primary: Boolean) {
     OVERLAY_TOP("Top layer", Layer.LIDAR, listOf(Layer.OLDMAP, Layer.LIDAR, Layer.AERIAL, Layer.TOPO), true),
     OVERLAY_BOTTOM("Bottom layer", Layer.AERIAL, listOf(Layer.AERIAL, Layer.TOPO, Layer.STREETS, Layer.LIDAR), false),
-    SWIPE_LEFT("Left of the divider", Layer.LIDAR, listOf(Layer.OLDMAP, Layer.LIDAR, Layer.AERIAL, Layer.TOPO, Layer.STREETS), true),
+    SWIPE_LEFT("Left of the divider", Layer.LIDAR, listOf(Layer.OLDMAP, Layer.LIDAR, Layer.AERIAL, Layer.TOPO), true),
     SWIPE_RIGHT("Right of the divider", Layer.AERIAL, listOf(Layer.AERIAL, Layer.TOPO, Layer.STREETS, Layer.LIDAR), false),
     SPLIT_TOP("Top pane", Layer.LIDAR, Layer.entries, true),
     SPLIT_BOTTOM("Bottom pane", Layer.AERIAL, Layer.entries, false),

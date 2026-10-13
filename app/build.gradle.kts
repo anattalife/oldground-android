@@ -15,7 +15,9 @@ android {
         targetSdk = 35
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "0.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
-        // Esri satellite key: a GitHub secret on the build server, never in the repo.
+        // Google Maps key: a GitHub secret on the build server. It's locked to this app's
+        // package name and signing key, so it's safe inside the app.
+        manifestPlaceholders["MAPS_API_KEY"] = (System.getenv("MAPS_API_KEY") ?: "").trim()
         ndk {
             // Phones and tablets (arm64), older devices (armv7), and emulators (x86_64).
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -71,7 +73,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-    implementation("org.maplibre.gl:android-sdk:11.6.1")
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
     testImplementation("junit:junit:4.13.2")
