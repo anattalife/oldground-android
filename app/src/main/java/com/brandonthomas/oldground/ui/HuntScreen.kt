@@ -792,6 +792,9 @@ private fun visibleLayers(mode: Mode, slot: (Slot) -> Layer): List<Layer> = when
 /** Registers a map as on screen while this is in the composition. */
 @Composable
 private fun LiveMap(name: String, m: OgMap, scan: ScanFrame?, live: MutableMap<String, Pair<OgMap, ScanFrame?>>) {
+    // Keeps Google's logo above the buttons along the bottom of the map.
+    val inset = with(LocalDensity.current) { 72.dp.roundToPx() }
+    androidx.compose.runtime.SideEffect { m.bottomInsetPx = inset }
     androidx.compose.runtime.DisposableEffect(m, scan) {
         live[name] = m to scan
         onDispose { if (live[name]?.first === m) live.remove(name) }

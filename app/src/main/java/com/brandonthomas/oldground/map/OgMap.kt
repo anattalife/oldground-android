@@ -102,6 +102,13 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
         set(v) { field = v; map?.uiSettings?.isRotateGesturesEnabled = v && interactive }
     var compassTopPx = 0
         set(v) { field = v; placeCompass() }
+    /** Space kept free at the bottom (for the buttons over the map); Google's logo sits above it. */
+    var bottomInsetPx = 0
+        set(v) {
+            field = v
+            map?.setPadding(0, 0, 0, v)
+            (credits.layoutParams as? FrameLayout.LayoutParams)?.let { it.bottomMargin = v; credits.layoutParams = it }
+        }
 
     private var userGesture = false
 
@@ -155,6 +162,7 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
             }
             m.setOnCameraIdleListener {
                 updateCompass()
+                layoutLabels()
                 onIdle?.invoke(cam(), userGesture)
                 userGesture = false
                 for (l in idleListeners.toList()) l()
@@ -166,6 +174,7 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
                 tapAt(LngLat(mk.position.longitude, mk.position.latitude), id)
                 true
             }
+            if (bottomInsetPx > 0) m.setPadding(0, 0, 0, bottomInsetPx)
             pendingCam?.let { setCamera(it.center, it.zoom, it.bearing) }
             pendingCam = null
             applyBase()
@@ -189,7 +198,8 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
 
     private fun updateCompass() {
         val b = map?.cameraPosition?.bearing ?: 0f
-        val show = interactive && abs(((b + 540) % 360) - 180) < 179.5f
+        val turned = abs(((b + 540) % 360) - 180) > 0.5f
+        val show = interactive && turned
         compass.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
         compass.rotation = -b
     }
@@ -327,6 +337,8 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
     }
 
     private fun clear(d: Data) {
+        if (d == Data.PINS) pinLabels.clear()
+        if (d == Data.SITES) siteLabels.clear()
         drawn.remove(d)?.forEach {
             when (it) {
                 is Marker -> it.remove()
@@ -354,7 +366,9 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
                 out.add(m.addPolyline(PolylineOptions().addAll(ll(p.rings.first())).color(TEAL).width(2.5f * density).zIndex(z + 0.1f)))
                 val name = f.string("name").orEmpty()
                 if (name.isNotEmpty()) centroid(p.rings.first())?.let { c ->
-                    out.add(m.addMarker(MarkerOptions().position(c).icon(icon("label|$name") { textBitmap(name, 12f, Color.parseColor("#0b5a54")) }).anchor(0.5f, 0.5f).zIndex(z))!!)
+                    val mk = m.addMarker(MarkerOptions().position(c).icon(icon("label|$name") { textBitmap(name, 12f, Color.parseColor("#0b5a54")) }).anchor(0.5f, 0.5f).zIndex(z))!!
+                    siteLabels.add(SiteLabel(mk, labelW(name, 12f), labelH(12f)))
+                    out.add(mk)
                 }
             }
             Data.DRAFT -> when (val g = f.geometry) {
@@ -400,10 +414,12 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
                 val name = f.string("name").orEmpty()
                 val photo = f.string("photo")?.let { images[it] }
                 val color = parseColor(f.string("color") ?: "#D4A017")
-                val spec = "pin|$color|${f.string("photo").takeIf { photo != null }}|$name"
-                val (ic, anchorY) = pinIcons.getOrPut(spec) { pinBitmap(photo, color, name).let { (b, a) -> BitmapDescriptorFactory.fromBitmap(b) to a } }
+                val pl = PinLabel(null, f.string("photo").takeIf { photo != null }, photo, color, name)
+                val (ic, anchorY) = pinIcon(pl, withLabel = false)
                 val mk = m.addMarker(MarkerOptions().position(LatLng(g.lat, g.lng)).icon(ic).anchor(0.5f, anchorY).zIndex(z))!!
                 mk.tag = f.string("id")
+                pl.marker = mk
+                pinLabels.add(pl)
                 out.add(mk)
             }
             Data.GHOST -> (f.geometry as? Point)?.let { g ->
@@ -413,6 +429,62 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
             Data.GPS -> {}
         }
         drawn[d] = out
+        if (d == Data.PINS || d == Data.SITES) layoutLabels()
+    }
+
+    // ---------- labels ----------
+
+    private class PinLabel(var marker: Marker?, val photoKey: String?, val photo: Bitmap?, val color: Int, val name: String, var showing: Boolean = false)
+    private class SiteLabel(val marker: Marker, val w: Float, val h: Float)
+    private val pinLabels = ArrayList<PinLabel>()
+    private val siteLabels = ArrayList<SiteLabel>()
+
+    private fun pinIcon(p: PinLabel, withLabel: Boolean): Pair<BitmapDescriptor, Float> {
+        val name = if (withLabel) p.name else ""
+        val spec = "pin|${p.color}|${p.photoKey}|$name"
+        return pinIcons.getOrPut(spec) { pinBitmap(p.photo, p.color, name).let { (b, a) -> BitmapDescriptorFactory.fromBitmap(b) to a } }
+    }
+
+    private fun labelW(text: String, sizeSp: Float) = textPaint(sizeSp, Color.BLACK).measureText(text) + 8 * density
+    private fun labelH(sizeSp: Float) = sizeSp * density * 1.5f
+
+    /**
+     * Shows each name only where it has room, like the map's own labels: pins first, then
+     * site names; a name that would cover a pin or another name is left off until you zoom in.
+     */
+    private fun layoutLabels() {
+        val m = map ?: return
+        val proj = m.projection
+        val taken = ArrayList<android.graphics.RectF>()
+        val pins = pinLabels.filter { it.marker != null }
+        val at = pins.map { proj.toScreenLocation(it.marker!!.position) }
+        pins.forEachIndexed { i, p ->
+            val r = (p.photo?.width ?: (2 * (8 + 2.5f) * density + 2).toInt()) / 2f
+            taken.add(android.graphics.RectF(at[i].x - r, at[i].y - r, at[i].x + r, at[i].y + r))
+        }
+        pins.forEachIndexed { i, p ->
+            var show = false
+            if (p.name.isNotEmpty()) {
+                val r = (p.photo?.height ?: (2 * (8 + 2.5f) * density + 2).toInt()) / 2f
+                val w = labelW(p.name, 13f)
+                val box = android.graphics.RectF(at[i].x - w / 2, at[i].y + r, at[i].x + w / 2, at[i].y + r + labelH(13f))
+                show = taken.none { android.graphics.RectF.intersects(it, box) }
+                if (show) taken.add(box)
+            }
+            if (show != p.showing) {
+                p.showing = show
+                val (ic, anchorY) = pinIcon(p, show)
+                p.marker!!.setIcon(ic)
+                p.marker!!.setAnchor(0.5f, anchorY)
+            }
+        }
+        for (l in siteLabels) {
+            val c = proj.toScreenLocation(l.marker.position)
+            val box = android.graphics.RectF(c.x - l.w / 2, c.y - l.h / 2, c.x + l.w / 2, c.y + l.h / 2)
+            val show = taken.none { android.graphics.RectF.intersects(it, box) }
+            if (show) taken.add(box)
+            l.marker.isVisible = show
+        }
     }
 
     /** The GPS dot moves often, so its markers are moved rather than redrawn. */
