@@ -262,7 +262,8 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
         when (b) {
             is Base.Geo -> when (b.layer) {
                 Layer.STREETS -> m.mapType = GoogleMap.MAP_TYPE_NORMAL
-                Layer.AERIAL -> m.mapType = GoogleMap.MAP_TYPE_SATELLITE
+                // Satellite with road and place names (shops and businesses stay hidden, see QUIET_STYLE).
+                Layer.AERIAL -> m.mapType = GoogleMap.MAP_TYPE_HYBRID
                 Layer.TOPO -> { m.mapType = GoogleMap.MAP_TYPE_NONE; bg = BG; tiles = Sources.raster(Layer.TOPO, com.brandonthomas.oldground.data.Settings(), null) }
                 Layer.LIDAR -> { m.mapType = GoogleMap.MAP_TYPE_SATELLITE; tiles = lidarRaster }
                 Layer.OLDMAP -> { m.mapType = GoogleMap.MAP_TYPE_NONE; bg = BG }
