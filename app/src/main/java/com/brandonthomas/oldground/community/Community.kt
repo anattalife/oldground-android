@@ -75,17 +75,12 @@ data class Profile(
     val banned: Boolean = false,
 )
 
+/** A signed-in session on oldgroundapp.com. */
 @Serializable
-private data class Session(
-    @SerialName("access_token") val accessToken: String,
-    @SerialName("refresh_token") val refreshToken: String,
-    @SerialName("expires_in") val expiresIn: Long = 3600,
-    val user: SessionUser? = null,
-    /** Filled in here: when the access token runs out (unix seconds). */
-    val expiresAtSec: Long = 0,
-    val userId: String = "",
-)
+private data class Session(val token: String, val userId: String)
 
+@Serializable private data class Me(val id: String, val profile: Profile? = null, val blocked: List<String> = emptyList())
+@Serializable private data class Verified(val token: String, val user: SessionUser, val profile: Profile? = null)
 @Serializable private data class SessionUser(val id: String, val email: String? = null)
 
 enum class Sort(val label: String) { HOT("Hot"), NEW("New"), TOP("Top") }
@@ -96,14 +91,13 @@ data class VideoInfo(val url: String, val provider: String, val id: String?, val
 class CommunityError(message: String) : Exception(message)
 
 /**
- * The OldGround community, on Supabase: sign in with an emailed code, read the feed,
- * post finds and videos, upvote, comment, report and block.
+ * The OldGround community, on oldgroundapp.com (Cloudflare): sign in with an emailed code,
+ * read the feed, post finds and videos, upvote, comment, report and block.
  */
 object Community {
-    const val URL_BASE = "https://kxppiixlbnoytxnkipvh.supabase.co"
-    private const val KEY = "sb_publishable_qAm1vsQ-eB9gKAjoMZcEng_eiJ1Lf9c"
-    /** Where the website shows a post, once it exists (blank: share text only). */
+    /** The website, which also serves the Community API (/api/...) and photos (/photos/...). */
     const val SITE = "https://oldgroundapp.com"
+    const val URL_BASE = SITE
 
     val REPORT_REASONS = listOf("Spam or advertising", "Not about metal detecting", "Shows a private location", "Rude or offensive", "Stolen photo or video", "Something else")
     val STATES = listOf(
@@ -143,9 +137,11 @@ object Community {
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("community", Context.MODE_PRIVATE)
+        // Sessions from before the move to oldgroundapp.com don't work there: sign in again.
         session = prefs.getString("session", null)?.let { runCatching { json.decodeFromString<Session>(it) }.getOrNull() }
+        if (session == null) prefs.edit().remove("session").remove("me").apply()
         _signedIn.value = session != null
-        prefs.getString("me", null)?.let { s -> _me.value = runCatching { json.decodeFromString<Profile>(s) }.getOrNull() }
+        if (session != null) prefs.getString("me", null)?.let { s -> _me.value = runCatching { json.decodeFromString<Profile>(s) }.getOrNull() }
     }
 
     fun startDemo() {
@@ -158,17 +154,14 @@ object Community {
 
     // ---------- HTTP ----------
 
-    private suspend fun call(method: String, path: String, body: String? = null, bytes: ByteArray? = null, contentType: String = "application/json", prefer: String? = null, signedIn: Boolean = true): String =
+    private suspend fun call(method: String, path: String, body: String? = null, bytes: ByteArray? = null, contentType: String = "application/json"): String =
         withContext(Dispatchers.IO) {
-            val token = if (signedIn) accessToken() else null
             val c = URL(URL_BASE + path).openConnection() as HttpURLConnection
             c.requestMethod = method // Android's HttpURLConnection accepts PATCH
             c.connectTimeout = 15000
             c.readTimeout = 30000
-            c.setRequestProperty("apikey", KEY)
-            if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
+            session?.let { c.setRequestProperty("Authorization", "Bearer ${it.token}") }
             c.setRequestProperty("Accept", "application/json")
-            prefer?.let { c.setRequestProperty("Prefer", it) }
             val payload = bytes ?: body?.toByteArray()
             if (payload != null) {
                 c.doOutput = true
@@ -178,40 +171,24 @@ object Community {
             val code = c.responseCode
             val text = (if (code in 200..299) c.inputStream else c.errorStream)?.use { it.readBytes().decodeToString() } ?: ""
             c.disconnect()
+            if (code == 401 && session != null) withContext(Dispatchers.Main) { clearSession() }
             if (code !in 200..299) throw CommunityError(errorText(code, text))
             text
         }
 
     private fun errorText(code: Int, text: String): String {
-        val o = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
-        val m = o?.let { it["msg"] ?: it["message"] ?: it["error_description"] ?: it["error"] }?.jsonPrimitive?.content
+        val m = runCatching { json.parseToJsonElement(text).jsonObject["error"]?.jsonPrimitive?.content }.getOrNull()
         return when {
-            code == 429 -> "Too many tries. Wait a minute and try again."
-            m?.contains("duplicate key") == true && m.contains("username") -> "That name is taken. Try another."
-            m?.contains("profiles_username_lower") == true -> "That name is taken. Try another."
-            m?.contains("expired") == true || m?.contains("invalid", true) == true && text.contains("otp", true) -> "That code didn't work. Check it, or send a new one."
             m != null -> m
+            code == 429 -> "Too many tries. Wait a minute and try again."
             else -> "Something went wrong ($code). Check your connection and try again."
         }
     }
 
-    private suspend fun accessToken(): String? {
-        val s = session ?: return null
-        if (s.expiresAtSec - 60 > System.currentTimeMillis() / 1000) return s.accessToken
-        return runCatching {
-            val text = call("POST", "/auth/v1/token?grant_type=refresh_token", """{"refresh_token":"${s.refreshToken}"}""", signedIn = false)
-            saveSession(json.decodeFromString<Session>(text)).accessToken
-        }.getOrElse {
-            if (it is CommunityError) { clearSession(); null } else s.accessToken
-        }
-    }
-
-    private fun saveSession(s: Session): Session {
-        val keep = s.copy(expiresAtSec = System.currentTimeMillis() / 1000 + s.expiresIn, userId = s.user?.id ?: session?.userId ?: "")
-        session = keep
-        prefs.edit().putString("session", json.encodeToString(Session.serializer(), keep)).apply()
+    private fun saveSession(s: Session) {
+        session = s
+        prefs.edit().putString("session", json.encodeToString(Session.serializer(), s)).apply()
         _signedIn.value = true
-        return keep
     }
 
     private fun clearSession() {
@@ -227,28 +204,25 @@ object Community {
     /** Emails a sign-in code (and makes the account the first time). */
     suspend fun sendCode(email: String) {
         if (demo) return
-        call("POST", "/auth/v1/otp", buildJsonObject { put("email", email.trim()); put("create_user", true) }.toString(), signedIn = false)
+        call("POST", "/api/auth/code", buildJsonObject { put("email", email.trim()) }.toString())
     }
 
     /** Checks the emailed code. Returns true when this person still needs to pick a username. */
     suspend fun verify(email: String, code: String): Boolean {
         if (demo) return false
-        val text = call("POST", "/auth/v1/verify", buildJsonObject { put("type", "email"); put("email", email.trim()); put("token", code.trim()) }.toString(), signedIn = false)
-        saveSession(json.decodeFromString<Session>(text))
+        val v = json.decodeFromString<Verified>(call("POST", "/api/auth/verify", buildJsonObject { put("email", email.trim()); put("code", code.trim()) }.toString()))
+        saveSession(Session(v.token, v.user.id))
         return loadMe() == null
     }
 
     /** Loads this member's profile and block list; null when they have no username yet. */
     suspend fun loadMe(): Profile? {
         if (demo) return _me.value
-        val id = myId ?: return null
-        val p = json.decodeFromString<List<Profile>>(call("GET", "/rest/v1/profiles?select=*&id=eq.$id")).firstOrNull()
-        setMe(p)
-        if (p != null) {
-            val rows = json.parseToJsonElement(call("GET", "/rest/v1/blocks?select=blocked_id&blocker_id=eq.$id"))
-            _blocked.value = (rows as kotlinx.serialization.json.JsonArray).map { it.jsonObject["blocked_id"]!!.jsonPrimitive.content }.toSet()
-        }
-        return p
+        if (session == null) return null
+        val m = json.decodeFromString<Me>(call("GET", "/api/me"))
+        setMe(m.profile)
+        _blocked.value = m.blocked.toSet()
+        return m.profile
     }
 
     private fun setMe(p: Profile?) {
@@ -260,9 +234,8 @@ object Community {
         val clean = name.trim()
         if (!Regex("^[A-Za-z0-9_]{3,20}$").matches(clean)) throw CommunityError("Use 3 to 20 letters, numbers or underscores.")
         if (demo) { _me.value = Profile("demo-me", clean); return }
-        val id = myId ?: throw CommunityError("Sign in first.")
-        val text = call("POST", "/rest/v1/profiles", buildJsonObject { put("id", id); put("username", clean) }.toString(), prefer = "return=representation")
-        setMe(json.decodeFromString<List<Profile>>(text).first())
+        if (session == null) throw CommunityError("Sign in first.")
+        setMe(json.decodeFromString<Profile>(call("POST", "/api/me/username", buildJsonObject { put("username", clean) }.toString())))
     }
 
     fun signOut() {
@@ -273,19 +246,8 @@ object Community {
     /** Deletes the account and everything it posted, photos included. */
     suspend fun deleteAccount() {
         if (demo) return
-        myId?.let { me ->
-            runCatching {
-                val body = buildJsonObject { put("prefix", me); put("limit", 1000) }.toString()
-                val list = json.parseToJsonElement(call("POST", "/storage/v1/object/list/post-photos", body))
-                deletePhotos((list as kotlinx.serialization.json.JsonArray).map { "$me/" + it.jsonObject["name"]!!.jsonPrimitive.content })
-            }
-        }
-        call("POST", "/rest/v1/rpc/delete_my_account", "{}")
+        call("DELETE", "/api/me")
         clearSession()
-    }
-
-    private suspend fun deletePhotos(paths: List<String>) {
-        for (p in paths) runCatching { call("DELETE", "/storage/v1/object/post-photos/$p") }
     }
 
     // ---------- reading ----------
@@ -293,31 +255,24 @@ object Community {
     suspend fun feed(sort: Sort, filter: String?): List<CPost> {
         if (demo) return Demo.posts.filter { filter == null || (filter == "Videos" && it.isVideo) || it.category == filter }
             .let { l -> when (sort) { Sort.NEW -> l.sortedByDescending { it.createdAt }; Sort.TOP -> l.sortedByDescending { it.score }; Sort.HOT -> l } }
-        val order = when (sort) {
-            Sort.HOT -> "pinned.desc,hot.desc"
-            Sort.NEW -> "created_at.desc"
-            Sort.TOP -> "score.desc,created_at.desc"
-        }
-        val f = when (filter) {
-            null -> ""
-            "Videos" -> "&kind=eq.video"
-            else -> "&category=eq.${enc(filter)}"
-        }
-        val list = json.decodeFromString<List<CPost>>(call("GET", "/rest/v1/feed?select=*&order=$order&limit=60$f", signedIn = session != null))
+        val f = filter?.let { "&type=${enc(it)}" } ?: ""
+        val list = json.decodeFromString<List<CPost>>(call("GET", "/api/posts?sort=${sort.name.lowercase()}&limit=60$f"))
         val b = _blocked.value
         return list.filter { it.authorId !in b }
     }
 
     suspend fun post(id: String): CPost? {
         if (demo) return Demo.posts.firstOrNull { it.id == id }
-        return json.decodeFromString<List<CPost>>(call("GET", "/rest/v1/feed?select=*&id=eq.$id", signedIn = session != null)).firstOrNull()
+        return try {
+            json.decodeFromString<CPost>(call("GET", "/api/posts/${enc(id)}"))
+        } catch (e: CommunityError) {
+            if (e.message?.contains("gone") == true) null else throw e
+        }
     }
 
     suspend fun comments(postId: String): List<CComment> {
         if (demo) return Demo.comments.filter { it.postId == postId }
-        val list = json.decodeFromString<List<CComment>>(
-            call("GET", "/rest/v1/comments?select=id,post_id,author_id,parent_id,body,created_at,profiles(username)&post_id=eq.$postId&removed=eq.false&order=created_at.asc", signedIn = session != null),
-        )
+        val list = json.decodeFromString<List<CComment>>(call("GET", "/api/posts/${enc(postId)}/comments"))
         val b = _blocked.value
         return list.filter { it.authorId !in b }
     }
@@ -325,37 +280,33 @@ object Community {
     /** Which of these posts I've upvoted. */
     suspend fun myVotes(ids: List<String>): Set<String> {
         if (demo) return setOf("d1")
-        val me = myId ?: return emptySet()
-        if (ids.isEmpty() || _me.value == null) return emptySet()
-        val rows = json.parseToJsonElement(call("GET", "/rest/v1/votes?select=post_id&user_id=eq.$me&post_id=in.(${ids.joinToString(",")})"))
-        return (rows as kotlinx.serialization.json.JsonArray).map { it.jsonObject["post_id"]!!.jsonPrimitive.content }.toSet()
+        if (ids.isEmpty() || _me.value == null || session == null) return emptySet()
+        val o = json.parseToJsonElement(call("GET", "/api/votes?ids=${ids.joinToString(",") { enc(it) }}")).jsonObject
+        return (o["ids"] as? kotlinx.serialization.json.JsonArray)?.map { it.jsonPrimitive.content }?.toSet() ?: emptySet()
     }
 
     // ---------- writing ----------
 
+    private fun needSignIn() { if (session == null) throw CommunityError("Sign in first.") }
+
     suspend fun vote(postId: String, on: Boolean) {
         if (demo) return
-        val me = myId ?: throw CommunityError("Sign in first.")
-        if (on) call("POST", "/rest/v1/votes", buildJsonObject { put("post_id", postId); put("user_id", me) }.toString(), prefer = "resolution=ignore-duplicates")
-        else call("DELETE", "/rest/v1/votes?post_id=eq.$postId&user_id=eq.$me")
+        needSignIn()
+        call(if (on) "POST" else "DELETE", "/api/posts/${enc(postId)}/vote")
     }
 
     suspend fun comment(postId: String, body: String, parentId: String?): CComment {
         if (demo) return CComment("c${System.nanoTime()}", postId, "demo-me", parentId, body, OffsetDateTime.now().toString(), Who(_me.value?.username ?: "you"))
-        val me = myId ?: throw CommunityError("Sign in first.")
-        val text = call(
-            "POST", "/rest/v1/comments?select=id,post_id,author_id,parent_id,body,created_at,profiles(username)",
-            buildJsonObject { put("post_id", postId); put("author_id", me); put("body", body.trim()); parentId?.let { put("parent_id", it) } }.toString(),
-            prefer = "return=representation",
-        )
-        return json.decodeFromString<List<CComment>>(text).first()
+        needSignIn()
+        val text = call("POST", "/api/posts/${enc(postId)}/comments", buildJsonObject { put("body", body.trim()); parentId?.let { put("parent_id", it) } }.toString())
+        return json.decodeFromString<CComment>(text)
     }
 
     suspend fun report(postId: String?, commentId: String?, reason: String) {
         if (demo) return
-        val me = myId ?: throw CommunityError("Sign in first.")
-        call("POST", "/rest/v1/reports", buildJsonObject {
-            put("reporter_id", me); put("reason", reason)
+        needSignIn()
+        call("POST", "/api/reports", buildJsonObject {
+            put("reason", reason)
             postId?.let { put("post_id", it) }; commentId?.let { put("comment_id", it) }
         }.toString())
     }
@@ -363,37 +314,31 @@ object Community {
     suspend fun block(userId: String) {
         _blocked.value = _blocked.value + userId
         if (demo) return
-        val me = myId ?: throw CommunityError("Sign in first.")
-        call("POST", "/rest/v1/blocks", buildJsonObject { put("blocker_id", me); put("blocked_id", userId) }.toString(), prefer = "resolution=ignore-duplicates")
+        needSignIn()
+        call("POST", "/api/blocks", buildJsonObject { put("blocked_id", userId) }.toString())
     }
 
-    suspend fun deletePost(id: String) {
-        if (demo) return
-        val photos = runCatching { post(id)?.photos }.getOrNull().orEmpty()
-        call("DELETE", "/rest/v1/posts?id=eq.$id")
-        deletePhotos(photos)
-    }
-    suspend fun deleteComment(id: String) { if (!demo) call("DELETE", "/rest/v1/comments?id=eq.$id") }
+    /** Deletes a post (its photos go with it). */
+    suspend fun deletePost(id: String) { if (!demo) call("DELETE", "/api/posts/${enc(id)}") }
+    suspend fun deleteComment(id: String) { if (!demo) call("DELETE", "/api/comments/${enc(id)}") }
 
     /** Staff only: take a post down or put it back. */
-    suspend fun setRemoved(id: String, removed: Boolean) { if (!demo) call("PATCH", "/rest/v1/posts?id=eq.$id", """{"removed":$removed}""") }
+    suspend fun setRemoved(id: String, removed: Boolean) { if (!demo) call("PATCH", "/api/posts/${enc(id)}", """{"removed":$removed}""") }
     /** Staff only: keep a post at the top of Hot. */
-    suspend fun setPinned(id: String, pinned: Boolean) { if (!demo) call("PATCH", "/rest/v1/posts?id=eq.$id", """{"pinned":$pinned}""") }
+    suspend fun setPinned(id: String, pinned: Boolean) { if (!demo) call("PATCH", "/api/posts/${enc(id)}", """{"pinned":$pinned}""") }
 
     /** Posts a find: uploads the photos (already shrunk and free of GPS data), then the post. Returns its id. */
     suspend fun postFind(
         title: String, body: String, category: String?, material: String?, depthIn: Double?, detector: String?, state: String?, photos: List<File>,
     ): String {
         if (demo) return "d1"
-        val me = myId ?: throw CommunityError("Sign in first.")
+        needSignIn()
         if (photos.isEmpty()) throw CommunityError("Add at least one photo.")
-        val paths = photos.take(6).mapIndexed { i, f ->
-            val path = "$me/${System.currentTimeMillis()}-$i.jpg"
-            call("POST", "/storage/v1/object/post-photos/$path", bytes = f.readBytes(), contentType = "image/jpeg")
-            path
+        val paths = photos.take(6).map { f ->
+            json.parseToJsonElement(call("POST", "/api/photos", bytes = f.readBytes(), contentType = "image/jpeg")).jsonObject["path"]!!.jsonPrimitive.content
         }
         val o = buildJsonObject {
-            put("author_id", me); put("kind", "find"); put("title", title.trim())
+            put("kind", "find"); put("title", title.trim())
             if (body.isNotBlank()) put("body", body.trim())
             category?.let { put("category", it) }; material?.let { put("material", it) }
             depthIn?.let { put("depth_in", it) }; detector?.takeIf { it.isNotBlank() }?.let { put("detector", it) }
@@ -406,9 +351,9 @@ object Community {
     /** Posts a YouTube or Facebook video link. Returns its id. */
     suspend fun postVideo(v: VideoInfo, title: String, body: String): String {
         if (demo) return "d2"
-        val me = myId ?: throw CommunityError("Sign in first.")
+        needSignIn()
         val o = buildJsonObject {
-            put("author_id", me); put("kind", "video"); put("title", title.trim())
+            put("kind", "video"); put("title", title.trim())
             if (body.isNotBlank()) put("body", body.trim())
             put("video_url", v.url); put("video_provider", v.provider)
             v.id?.let { put("video_id", it) }; v.channel?.let { put("video_channel", it) }; v.thumb?.let { put("video_thumb", it) }
@@ -416,10 +361,8 @@ object Community {
         return insertPost(o)
     }
 
-    private suspend fun insertPost(o: JsonObject): String {
-        val text = call("POST", "/rest/v1/posts?select=id", o.toString(), prefer = "return=representation")
-        return json.parseToJsonElement(text).let { (it as kotlinx.serialization.json.JsonArray).first().jsonObject["id"]!!.jsonPrimitive.content }
-    }
+    private suspend fun insertPost(o: JsonObject): String =
+        json.parseToJsonElement(call("POST", "/api/posts", o.toString())).jsonObject["id"]!!.jsonPrimitive.content
 
     // ---------- videos ----------
 
@@ -454,7 +397,7 @@ object Community {
 
     // ---------- helpers ----------
 
-    fun photoUrl(path: String) = "$URL_BASE/storage/v1/object/public/post-photos/$path"
+    fun photoUrl(path: String) = "$SITE/photos/$path"
 
     /** "2h", "3d", "Oct 4". */
     fun ago(iso: String): String = runCatching {
