@@ -92,5 +92,7 @@ shot HELP --es screen help
 shot HELPTOPIC --es screen help --es topic old-maps
 adb shell "run-as $P cat files/last-crash.txt" > $OUT/last-crash.txt 2>/dev/null || true
 adb logcat -d -b crash > $OUT/crash.txt
-adb logcat -d -v brief AndroidRuntime:E OldGround:V libc:F DEBUG:F maplibre:E Mbgl:E '*:S' > $OUT/errors.txt
+adb logcat -d -v brief AndroidRuntime:E OldGround:V libc:F DEBUG:F '*:S' > $OUT/errors.txt
+# What Google's map says about the key (authorization problems show up here).
+adb logcat -d -v brief | grep -iE "Google Maps|API key|API_KEY|Authorization failure|not authorized|MapsInitializer|maps_api|Ensure that the" | sort | uniq -c | sort -rn | head -40 > $OUT/maps.txt
 cat $OUT/result.txt

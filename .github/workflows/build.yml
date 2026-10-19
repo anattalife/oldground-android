@@ -51,6 +51,7 @@ jobs:
             --notes "Built from ${{ github.sha }}. Install oldground.apk on your Android device."
           {
             echo "BUILD OK (run ${{ github.run_number }})"
+            if [ -n "$MAPS_API_KEY" ]; then echo "Google Maps key: present (${#MAPS_API_KEY} characters)"; else echo "Google Maps key: MISSING"; fi
             echo
             echo "APK: https://github.com/${{ github.repository }}/releases/download/test-build/oldground.apk"
           } > comment.txt
@@ -112,6 +113,10 @@ jobs:
             echo "Errors:"
             echo '```'
             grep -v "^--------- beginning" smoke/errors.txt 2>/dev/null | tail -c 15000
+            echo '```'
+            echo "Google Maps:"
+            echo '```'
+            cat smoke/maps.txt 2>/dev/null | cut -c1-300
             echo '```'
           } > smoke.txt
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@smoke.txt
