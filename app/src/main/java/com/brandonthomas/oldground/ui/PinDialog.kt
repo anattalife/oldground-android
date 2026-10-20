@@ -60,6 +60,8 @@ import com.brandonthomas.oldground.data.FIND_MATERIALS
 import com.brandonthomas.oldground.data.Photos
 import com.brandonthomas.oldground.data.Pin
 import com.brandonthomas.oldground.data.PinKind
+import com.brandonthomas.oldground.data.colorHex
+import com.brandonthomas.oldground.data.iconId
 import com.brandonthomas.oldground.geo.LngLat
 import com.brandonthomas.oldground.geo.Mercator
 import kotlinx.coroutines.Dispatchers
@@ -89,11 +91,19 @@ data class PinDraft(
     val detector: String? = null,
     val rating: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
+    val icon: String? = null,
+    val color: String? = null,
 ) {
     companion object {
-        fun of(p: Pin) = PinDraft(p.geo, p.name, p.kind, p.note, p.id, p.photos, p.category, p.material, p.depthIn, p.vdi, p.detector, p.rating, p.createdAt)
+        fun of(p: Pin) = PinDraft(p.geo, p.name, p.kind, p.note, p.id, p.photos, p.category, p.material, p.depthIn, p.vdi, p.detector, p.rating, p.createdAt, p.iconId, p.colorHex)
     }
 }
+
+/** Starting look for a new find or point. */
+const val FIND_ICON = "coin"
+const val FIND_COLOR = "#B45309"
+const val POINT_ICON = "dot"
+const val POINT_COLOR = "#0F766E"
 
 private const val MAX_PHOTOS = 4
 
@@ -128,6 +138,14 @@ fun PinDialog(
     var detector by remember { mutableStateOf(d.detector ?: lastDetector) }
     var editDetector by remember { mutableStateOf(detector.isBlank()) }
     var rating by remember { mutableStateOf(d.rating) }
+    var icon by remember { mutableStateOf(d.icon ?: if (d.kind == PinKind.FIND) FIND_ICON else POINT_ICON) }
+    var color by remember { mutableStateOf(d.color ?: if (d.kind == PinKind.FIND) FIND_COLOR else POINT_COLOR) }
+    fun setFind(on: Boolean) {
+        // Keep a chosen look; swap only the starting one.
+        if (on && icon == POINT_ICON && color == POINT_COLOR) { icon = FIND_ICON; color = FIND_COLOR }
+        if (!on && icon == FIND_ICON && color == FIND_COLOR) { icon = POINT_ICON; color = POINT_COLOR }
+        kind = if (on) PinKind.FIND else if (d.kind != PinKind.FIND) d.kind else PinKind.OTHER
+    }
     var confirmDelete by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
 
@@ -159,15 +177,16 @@ fun PinDialog(
                 category = if (isFind) category else null, material = if (isFind) material else null,
                 depthIn = if (isFind) depthIn else null, vdi = if (isFind) vdi.trim().toIntOrNull() else null,
                 detector = if (isFind) detector.trim().ifBlank { null } else null, rating = rating,
+                icon = icon, color = color,
             ),
         )
     }
 
     val title = when {
         d.editing != null && kind == PinKind.FIND -> "Edit find"
-        d.editing != null -> "Edit pin"
+        d.editing != null -> "Edit point"
         kind == PinKind.FIND -> "New find"
-        else -> "New pin"
+        else -> "New point"
     }
     val fieldColors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = C.line, focusedBorderColor = C.accent)
 
@@ -201,13 +220,23 @@ fun PinDialog(
 
                 LabeledField(if (kind == PinKind.FIND) "What is it" else "Name") {
                     OutlinedTextField(name, { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = fieldColors,
-                        placeholder = { Text(if (kind == PinKind.FIND) "e.g. 1864 Indian Head cent" else "e.g. Miller homestead") })
+                        placeholder = { Text(if (kind == PinKind.FIND) "e.g. 1864 Indian Head cent" else "e.g. Cellar hole, old spring, family plot") })
                 }
-                LabeledField("Pin type") {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (k in PinKind.entries) SoftChip(k.label, k == kind, dot = k.color) { kind = k }
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (kind == PinKind.FIND) C.accentSoft else C.soft)
+                        .clickable { setFind(kind != PinKind.FIND) }.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("This is a find", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = C.ink)
+                        Text("Something you dug or picked up: adds category, depth and more", fontSize = 12.sp, color = C.muted)
                     }
+                    androidx.compose.material3.Switch(
+                        checked = kind == PinKind.FIND, onCheckedChange = { setFind(it) },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = C.accent),
+                    )
                 }
+                IconColorPicker(icon, color, { icon = it }, { color = it })
                 if (kind == PinKind.FIND) {
                     LabeledField("Category") {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -279,13 +308,13 @@ fun PinDialog(
                     color = C.muted, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
                 )
                 if (onDelete != null) {
-                    Text("Delete pin", Modifier.align(Alignment.CenterHorizontally).clickable { confirmDelete = true }.padding(8.dp), color = C.bad, fontWeight = FontWeight.Bold)
+                    Text(if (kind == PinKind.FIND) "Delete find" else "Delete point", Modifier.align(Alignment.CenterHorizontally).clickable { confirmDelete = true }.padding(8.dp), color = C.bad, fontWeight = FontWeight.Bold)
                 }
             }
         }
     }
     if (confirmDelete && onDelete != null) {
-        ConfirmDialog("Delete this pin?", "\"${name.ifBlank { "Pin" }}\" and its photos will be removed.", "Delete",
+        ConfirmDialog("Delete this point?", "\"${name.ifBlank { "Point" }}\" and its photos will be removed.", "Delete",
             onCancel = { confirmDelete = false }) {
             confirmDelete = false
             photos.forEach { Photos.delete(ctx, it) }

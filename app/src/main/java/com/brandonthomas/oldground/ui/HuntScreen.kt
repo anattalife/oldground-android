@@ -1,5 +1,7 @@
 package com.brandonthomas.oldground.ui
 
+import com.brandonthomas.oldground.data.colorHex
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -286,6 +288,7 @@ fun HuntScreen(
             if (Repo.activeVisit?.siteId != r.siteId) com.brandonthomas.oldground.location.VisitControl.start(ctx, r.siteId)
             follow = true
         }
+        if (r.addPoint) pinMode = true
         // Used by the automated screenshots to open a sheet or dialog.
         if (r.debug == null) return@LaunchedEffect
         kotlinx.coroutines.delay(1300)
@@ -319,7 +322,7 @@ fun HuntScreen(
             drawing != null -> if (geo != null) corners.add(geo)
             pinMode && geo != null -> {
                 pinMode = false
-                draft = PinDraft(geo, "", com.brandonthomas.oldground.data.PinKind.FIND, "", null)
+                draft = PinDraft(geo, "", newPointKind(), "", null)
             }
             hit != null -> cardPin = hit
             land != null -> landInfo = PublicLand.describe(land)
@@ -330,7 +333,7 @@ fun HuntScreen(
         val geo = if (scan != null) scan.toGeo(at) else at
         if (geo != null && drawing == null) {
             pinMode = false
-            draft = PinDraft(geo, "", com.brandonthomas.oldground.data.PinKind.FIND, "", null)
+            draft = PinDraft(geo, "", newPointKind(), "", null)
         }
     }
     fun rememberCam(c: Cam, scan: ScanFrame?) {
@@ -388,7 +391,7 @@ fun HuntScreen(
                     // The left side is drawn as tiles (Google's own map can't be cut at the divider).
                     LaunchedEffect(left, settings, map?.warp?.zDone, map?.warp?.dir) { upper.raster = Sources.raster(left, settings, map) }
                     LaunchedEffect(data.pins, fix) {
-                        upper.pins = data.pins.map { it.geo to android.graphics.Color.parseColor(it.kind.color) }
+                        upper.pins = data.pins.map { it.geo to android.graphics.Color.parseColor(it.colorHex) }
                         upper.gps = fix?.geo
                     }
                     LiveMap("main", lower, null, live)
@@ -620,7 +623,7 @@ fun HuntScreen(
                     pinMode = false
                     val f = LocationHub.fix.value
                     if (f == null) message = "No GPS fix yet" to "Wait for the blue dot, or tap the map where you want the pin."
-                    else draft = PinDraft(f.geo, "", com.brandonthomas.oldground.data.PinKind.FIND, "", null)
+                    else draft = PinDraft(f.geo, "", newPointKind(), "", null)
                 })
             }
         }
@@ -753,12 +756,13 @@ fun HuntScreen(
                 it.copy(
                     name = s.name.ifBlank { it.name }, kind = s.kind, note = s.note, photos = s.photos, category = s.category,
                     material = s.material, depthIn = s.depthIn, vdi = s.vdi, detector = s.detector, rating = s.rating,
+                    icon = s.icon, color = s.color,
                 )
             } else Repo.addPin(
                 Pin(
-                    Repo.newId(), s.name.ifBlank { if (s.kind == com.brandonthomas.oldground.data.PinKind.FIND) s.category ?: "Find" else "Pin" },
+                    Repo.newId(), s.name.ifBlank { if (s.kind == com.brandonthomas.oldground.data.PinKind.FIND) s.category ?: "Find" else "Point" },
                     s.kind, s.geo.lng, s.geo.lat, s.note, mapId, System.currentTimeMillis(), s.photos, s.category, s.material,
-                    s.depthIn, s.vdi, s.detector, s.rating,
+                    s.depthIn, s.vdi, s.detector, s.rating, s.icon, s.color,
                 ),
             )
             if (!s.detector.isNullOrBlank() && s.detector != settings.lastDetector) Repo.updateSettings { it.copy(lastDetector = s.detector) }
@@ -966,7 +970,7 @@ private fun MapControls(
             when {
                 photo != null -> PhotoThumb(photo, Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)), px = 140)
                 nearest != null -> Box(Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(C.soft), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(11.dp).clip(CircleShape).background(hexColor(nearest.kind.color)))
+                    PinBadge(nearest, 24.dp)
                 }
             }
             Column(Modifier.weight(1f)) {
@@ -1133,3 +1137,7 @@ private fun PanelButton(label: String, bg: Color, fg: Color, enabled: Boolean, o
         contentAlignment = Alignment.Center,
     ) { Text(label, color = if (enabled) fg else fg.copy(alpha = 0.6f), fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
 }
+
+/** A new pin is a find during a visit, otherwise a point. */
+private fun newPointKind() =
+    if (Repo.activeVisit != null) com.brandonthomas.oldground.data.PinKind.FIND else com.brandonthomas.oldground.data.PinKind.OTHER

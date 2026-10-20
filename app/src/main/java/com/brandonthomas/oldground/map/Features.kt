@@ -3,6 +3,8 @@ package com.brandonthomas.oldground.map
 import com.brandonthomas.oldground.data.Pin
 import com.brandonthomas.oldground.data.Site
 import com.brandonthomas.oldground.data.TrackPt
+import com.brandonthomas.oldground.data.colorHex
+import com.brandonthomas.oldground.data.iconId
 import com.brandonthomas.oldground.geo.LngLat
 import com.brandonthomas.oldground.location.Fix
 
@@ -21,7 +23,8 @@ object Features {
             Feature.fromGeometry(pt(g)).apply {
                 addStringProperty("id", p.id)
                 addStringProperty("name", p.name)
-                addStringProperty("color", p.kind.color)
+                addStringProperty("color", p.colorHex)
+                addStringProperty("icon", p.iconId)
                 p.photos.firstOrNull()?.let { addStringProperty("photo", photoImageId(it)) }
             }
         })

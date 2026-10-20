@@ -79,8 +79,13 @@ data class Pin(
     val detector: String? = null,
     /** 0 = not rated, 1..5 stars. */
     val rating: Int = 0,
+    /** Icon id from [PinIcons] (null: the default for its kind). */
+    val icon: String? = null,
+    /** Colour as #RRGGBB (null: the default for its kind). */
+    val color: String? = null,
 ) {
     val geo get() = LngLat(lng, lat)
+    val isFind get() = kind == PinKind.FIND
 }
 
 /**
@@ -102,6 +107,8 @@ data class Site(
     val permission: Permission? = null,
     /** Calls, texts and visits with the landowner, newest last. */
     val contacts: List<ContactNote> = emptyList(),
+    /** Research kept with the site (not placed on the map), newest first. */
+    val notes: List<SiteNote> = emptyList(),
 ) {
     val ring get() = outline.map { LngLat(it[0], it[1]) }
 }
@@ -123,6 +130,25 @@ data class Permission(
     val signature: String,
     val pdf: String,
 )
+
+/** A note in a site: text, photos and files (deeds, maps, PDFs), with an optional label. */
+@Serializable
+data class SiteNote(
+    val id: String,
+    val title: String,
+    val text: String = "",
+    val label: String? = null,
+    val createdAt: Long,
+    /** Photo file names in the photos folder. */
+    val photos: List<String> = emptyList(),
+    /** Attached files in the notes folder. */
+    val files: List<NoteFile> = emptyList(),
+)
+
+@Serializable
+data class NoteFile(val file: String, val name: String, val mime: String = "application/octet-stream")
+
+val NOTE_LABELS = listOf("History", "Deed", "Map", "Lead", "Photo", "Other")
 
 @Serializable
 data class ContactNote(val at: Long, val how: String, val note: String = "")

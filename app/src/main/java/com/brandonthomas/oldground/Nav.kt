@@ -53,7 +53,7 @@ class ShellState(startTab: Tab, oldMap: String?) {
                 val st = stacks.getValue(Tab.FINDS)
                 st.clear(); st.add(s); tab = Tab.FINDS
             }
-            is Screen.Site, is Screen.Visit, is Screen.PermissionSlip -> openIn(Tab.SITES, false, s)
+            is Screen.Site, is Screen.Visit, is Screen.PermissionSlip, is Screen.Report -> openIn(Tab.SITES, false, s)
             is Screen.Align -> openIn(Tab.OLD, false, s)
             is Screen.CommunityRoot -> {
                 val st = stacks.getValue(Tab.COMMUNITY)
@@ -96,7 +96,7 @@ class ShellState(startTab: Tab, oldMap: String?) {
 
     private fun showOnMap(h: Screen.Hunt) {
         if (!h.keepOldMap && h.mapId != oldMapId) setOldMap(h.mapId)
-        request = MapRequest(h.pinId, h.siteId, h.draw, h.startVisit, h.notice, h.mode, h.debug)
+        request = MapRequest(h.pinId, h.siteId, h.draw, h.startVisit, h.notice, h.mode, h.debug, h.addPoint)
         tab = Tab.MAP
     }
 }

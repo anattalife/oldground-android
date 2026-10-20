@@ -3,4 +3,5 @@
     <cache-path name="cache" path="." />
     <files-path name="photos" path="oldground/photos/" />
     <files-path name="permissions" path="oldground/permissions/" />
+    <files-path name="notes" path="oldground/notes/" />
 </paths>

@@ -265,7 +265,7 @@ fun FindTile(p: Pin, modifier: Modifier, onClick: () -> Unit) {
     Box(modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(C.soft).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         if (photo != null) PhotoThumb(photo, Modifier.fillMaxSize(), px = 240)
         else Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(4.dp)) {
-            Box(Modifier.size(12.dp).clip(CircleShape).background(hexColor(p.kind.color)))
+            PinBadge(p, 24.dp)
             Spacer(Modifier.height(4.dp))
             Text(p.name, fontSize = 10.sp, color = C.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 12.sp)
         }

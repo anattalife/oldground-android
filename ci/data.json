@@ -62,7 +62,9 @@
    "lat": 39.96142,
    "note": "House on the 1875 atlas, gone by 1912.",
    "mapId": "ci1",
-   "createdAt": 1788274800000
+   "createdAt": 1788274800000,
+   "icon": "house",
+   "color": "#8D5524"
   },
   {
    "id": "p2",
@@ -100,7 +102,9 @@
    "lng": -82.9856,
    "lat": 39.95595,
    "note": "Ditch shows on Stretched LiDAR.",
-   "createdAt": 1788447600000
+   "createdAt": 1788447600000,
+   "icon": "rail",
+   "color": "#374151"
   },
   {
    "id": "p5",
@@ -251,6 +255,39 @@
    "depthIn": 3.0,
    "detector": "XP Deus II \u00b7 Program 4 \u00b7 Sens 92",
    "rating": 1
+  },
+  {
+   "id": "p14",
+   "name": "Cellar hole",
+   "kind": "OTHER",
+   "lng": -82.995,
+   "lat": 39.96135,
+   "note": "8 x 10 ft, half filled",
+   "createdAt": 1790010300000,
+   "icon": "cellar",
+   "color": "#C2410C"
+  },
+  {
+   "id": "p15",
+   "name": "Old spring",
+   "kind": "OTHER",
+   "lng": -82.994,
+   "lat": 39.96125,
+   "note": "Stone-lined, still running",
+   "createdAt": 1789923900000,
+   "icon": "spring",
+   "color": "#2563EB"
+  },
+  {
+   "id": "p16",
+   "name": "Family plot",
+   "kind": "OTHER",
+   "lng": -82.9946,
+   "lat": 39.96155,
+   "note": "Three stones, 1850s",
+   "createdAt": 1789837500000,
+   "icon": "grave",
+   "color": "#15803D"
   }
  ],
  "tracks": [
@@ -293,7 +330,30 @@
    ],
    "photo": "ci-tray1.jpg",
    "createdAt": 1788274800000,
-   "note": "Ask for Ruth at the farmhouse."
+   "note": "Ask for Ruth at the farmhouse.",
+   "notes": [
+    {
+     "id": "n1",
+     "title": "1872 deed, J. Miller",
+     "text": "Sold 40 acres \"with the dwelling and spring\" to his son. The house sat north of the road, so the cellar hole lines up.",
+     "label": "Deed",
+     "createdAt": 1791306300000
+    },
+    {
+     "id": "n2",
+     "title": "1875 county atlas",
+     "text": "House and barn shown on the plat, orchard to the east.",
+     "label": "Map",
+     "createdAt": 1790960700000
+    },
+    {
+     "id": "n3",
+     "title": "Talked to the neighbor",
+     "text": "Says a school stood by the road until the 1920s.",
+     "label": "Lead",
+     "createdAt": 1790701500000
+    }
+   ]
   },
   {
    "id": "s2",

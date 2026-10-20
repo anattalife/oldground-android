@@ -29,6 +29,8 @@ data class MapRequest(
     val notice: String? = null,
     val mode: String? = null,
     val debug: String? = null,
+    /** Start placing a new point (tap the spot or My spot). */
+    val addPoint: Boolean = false,
     val token: Long = System.nanoTime(),
 )
 
@@ -46,6 +48,8 @@ sealed interface Screen {
     data object Help : Screen
     /** Fill in and sign a permission slip for a site. */
     data class PermissionSlip(val siteId: String, val debug: String? = null) : Screen
+    /** Choose finds for a landowner's report, preview it, then send it. */
+    data class Report(val siteId: String, val debug: String? = null) : Screen
     data class HelpTopic(val id: String) : Screen
     data class CommunityPost(val id: String, val debug: String? = null) : Screen
     /** A new post, optionally filled in from one of your finds. */
@@ -61,6 +65,7 @@ sealed interface Screen {
         val draw: String? = null, val siteId: String? = null, val startVisit: Boolean = false, val notice: String? = null,
         /** Keep the old map that's showing (instead of switching to [mapId], which may be null). */
         val keepOldMap: Boolean = mapId == null,
+        val addPoint: Boolean = false,
     ) : Screen
 }
 
@@ -96,6 +101,7 @@ class MainActivity : ComponentActivity() {
             "join" -> Tab.COMMUNITY to listOf(Screen.CommunityRoot(), Screen.JoinPage(debug))
             "settings" -> Tab.OLD to listOf(Screen.Settings)
             "slip" -> i.getStringExtra("site")?.let { Tab.SITES to listOf(Screen.Site(it), Screen.PermissionSlip(it, debug)) }
+            "report" -> i.getStringExtra("site")?.let { Tab.SITES to listOf(Screen.Site(it), Screen.Report(it, debug)) }
             "help" -> Tab.OLD to listOfNotNull(Screen.Settings, Screen.Help, i.getStringExtra("topic")?.let { Screen.HelpTopic(it) })
             "site" -> i.getStringExtra("site")?.let { Tab.SITES to listOf(Screen.Site(it, debug)) }
             "visit" -> {

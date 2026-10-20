@@ -64,6 +64,13 @@ shot SETTINGS --es screen settings
 shot SITE --es screen site --es site s1
 shot SITENOPHOTO --es screen site --es site s3
 shot SITEEDIT --es screen site --es site s1 --es debug edit
+shot SITEPOINTS --es screen site --es site s1 --es debug points
+shot SITENOTES --es screen site --es site s1 --es debug notes
+shot SITENOTE --es screen site --es site s1 --es debug note
+shot SITEOWNER --es screen site --es site s2 --es debug owner
+shot REPORTPICK --es screen report --es site s2
+WAIT=30 shot REPORTPREVIEW --es screen report --es site s2 --es debug preview
+shot POINTNEW --es openMap none --es mode OVERLAY --es site s1 --es pin p14 --es debug pin
 shot VISIT --es screen visit --es site s1 --es day 2026-10-11
 shot DRAW --es openMap none --es mode OVERLAY --es draw new --es debug drawdemo
 shot MAPSITE --es openMap none --es mode OVERLAY --es site s1 --es debug none

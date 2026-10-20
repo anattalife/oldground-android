@@ -137,7 +137,7 @@ fun PinsTracksTab(nav: Nav, tracks: Boolean = false) {
                     val photo = p.photos.firstOrNull()
                     if (photo != null) PhotoThumb(photo, Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)), px = 200)
                     else Box(Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)).background(C.soft), contentAlignment = Alignment.Center) {
-                        Box(Modifier.size(14.dp).clip(CircleShape).background(hexColor(p.kind.color)))
+                        PinBadge(p, 30.dp)
                     }
                     Column(Modifier.weight(1f)) {
                         Text(p.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = C.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -58,14 +58,14 @@ private val AMBER_SOFT = Color(0xFFFEF3E2)
 
 /** The landowner card on a site's page: the slip, their contact details, a contact log and a finds report. */
 @Composable
-fun PermissionCard(nav: Nav, site: Site, finds: List<Pin>, metric: Boolean) {
+fun PermissionCard(nav: Nav, site: Site, finds: List<Pin>, metric: Boolean, modifier: Modifier = Modifier.fillMaxWidth().card(16, 2)) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val st = Permissions.status(site)
     val p = site.permission
     var logging by remember { mutableStateOf(false) }
     var showAll by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().card(16, 2).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Permission", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
             val (bg, fg) = when (st.level) {
@@ -87,7 +87,7 @@ fun PermissionCard(nav: Nav, site: Site, finds: List<Pin>, metric: Boolean) {
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Pill("View slip", { Permissions.view(ctx, Permissions.file(ctx, p.pdf)) }, Modifier.weight(1f), kind = "soft", small = true)
-                Pill("Send a copy", { Permissions.share(ctx, Permissions.file(ctx, p.pdf), "Permission to metal detect: ${site.name}", p.ownerEmail) }, Modifier.weight(1f), kind = "soft", small = true)
+                Pill("Send a copy", { Permissions.share(ctx, Permissions.file(ctx, p.pdf), "Permission: ${site.name}", p.ownerEmail) }, Modifier.weight(1f), kind = "soft", small = true)
                 Pill("Renew", { nav.go(com.brandonthomas.oldground.Screen.PermissionSlip(site.id)) }, Modifier.weight(1f), kind = if (st.level == Permissions.Level.OK) "soft" else "primary", small = true)
             }
             // The landowner.
@@ -122,14 +122,9 @@ fun PermissionCard(nav: Nav, site: Site, finds: List<Pin>, metric: Boolean) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text("Finds report", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = C.ink)
-                    Text("A PDF of everything found here, with photos, for the landowner.", fontSize = 12.5.sp, color = C.muted)
+                    Text("Pick the finds, check the PDF, then send it to the owner.", fontSize = 12.5.sp, color = C.muted)
                 }
-                Pill("Send", {
-                    scope.launch {
-                        val f = withContext(Dispatchers.IO) { Permissions.findsReport(ctx, site, finds, metric) }
-                        Permissions.share(ctx, f, "Finds from ${site.name}", p?.ownerEmail)
-                    }
-                }, kind = "tint", small = true)
+                Pill("Preview", { nav.go(com.brandonthomas.oldground.Screen.Report(site.id)) }, kind = "tint", small = true)
             }
         }
     }
@@ -288,7 +283,7 @@ fun PermissionSlipScreen(nav: Nav, siteId: String, debug: String? = null) {
                 Text("Signed and saved", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
                 Text("The slip is saved with ${site.name} on this phone. Send ${owner.ifBlank { "the owner" }} a copy, and one to yourself as a backup.", fontSize = 14.5.sp, color = C.muted, lineHeight = 21.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 val p = site.permission
-                Pill("Send a copy", { p?.let { Permissions.share(ctx, Permissions.file(ctx, it.pdf), "Permission to metal detect: ${site.name}", it.ownerEmail) } }, Modifier.fillMaxWidth(), kind = "primary")
+                Pill("Send a copy", { p?.let { Permissions.share(ctx, Permissions.file(ctx, it.pdf), "Permission: ${site.name}", it.ownerEmail) } }, Modifier.fillMaxWidth(), kind = "primary")
                 Pill("Done", { nav.back() }, Modifier.fillMaxWidth(), kind = "soft")
             }
         }

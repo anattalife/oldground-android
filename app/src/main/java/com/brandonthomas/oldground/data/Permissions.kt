@@ -33,11 +33,11 @@ object Permissions {
     fun wording(siteName: String, owner: String, hunter: String, startsAt: Long, expiresAt: Long?, conditions: List<String>, extra: String): List<String> {
         val until = expiresAt?.let { "until ${date(it)}" } ?: "until I withdraw it"
         val out = mutableListOf(
-            "I, ${owner.ifBlank { "the owner" }}, give ${hunter.ifBlank { "the detectorist" }} permission to search for and dig up objects with a metal detector on my property, “$siteName”, shown below, from ${date(startsAt)} $until.",
+            "I, ${owner.ifBlank { "the owner" }}, give ${hunter.ifBlank { "the visitor" }} permission to explore my property, “$siteName”, shown below, and to search for and dig up objects there, including with a metal detector, from ${date(startsAt)} $until.",
         )
         val all = conditions + listOfNotNull(extra.trim().takeIf { it.isNotEmpty() })
         if (all.isNotEmpty()) out += "Conditions:\n" + all.joinToString("\n") { "•  $it" }
-        out += "I can withdraw this permission at any time by telling ${hunter.ifBlank { "the detectorist" }}."
+        out += "I can withdraw this permission at any time by telling ${hunter.ifBlank { "the visitor" }}."
         return out
     }
 
@@ -100,7 +100,7 @@ object Permissions {
     }
 
     /** The outline of the site, scaled into a box, with north up. */
-    private fun drawOutline(c: Canvas, ring: List<com.brandonthomas.oldground.geo.LngLat>, box: RectF) {
+    private fun drawOutline(c: Canvas, ring: List<com.brandonthomas.oldground.geo.LngLat>, box: RectF, dots: List<com.brandonthomas.oldground.geo.LngLat> = emptyList()) {
         if (ring.size < 3) return
         val minX = ring.minOf { it.lng }; val maxX = ring.maxOf { it.lng }
         val minY = ring.minOf { it.lat }; val maxY = ring.maxOf { it.lat }
@@ -120,11 +120,21 @@ object Permissions {
         c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(60, 15, 118, 110) })
         c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(15, 118, 110); style = Paint.Style.STROKE; strokeWidth = 2f })
         c.drawText("N ↑", box.right - 30, box.top + 16, Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 10f; color = Color.GRAY })
+        // Numbered finds, matching the list below.
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(180, 83, 9) }
+        val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        val num = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 8f; typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER }
+        dots.forEachIndexed { i, p ->
+            val x = ox + ((p.lng - minX) * kx * s).toFloat()
+            val y = oy + ((maxY - p.lat) * s).toFloat()
+            c.drawCircle(x, y, 8f, rim); c.drawCircle(x, y, 6.6f, fill)
+            c.drawText("${i + 1}", x, y + 2.8f, num)
+        }
     }
 
     fun slipPdf(ctx: Context, site: Site, p: Permission, metric: Boolean): File {
         val w = Writer(PdfDocument())
-        w.text("Permission to metal detect", 22f, bold = true, gapAfter = 4f)
+        w.text("Permission to search", 22f, bold = true, gapAfter = 4f)
         w.text(site.name, 13f, color = Color.rgb(85, 99, 95), gapAfter = 18f)
         for (para in wording(site.name, p.ownerName, p.hunterName, p.startsAt, p.expiresAt, p.conditions, p.extra)) w.text(para, 12.5f, gapAfter = 12f)
         // The property.
@@ -168,9 +178,15 @@ object Permissions {
         w.text(listOfNotNull(site.name, owner?.let { "for $it" }, date(System.currentTimeMillis())).joinToString(" · "), 13f, color = Color.rgb(85, 99, 95), gapAfter = 8f)
         w.text(
             if (finds.isEmpty()) "Nothing found yet." else "${finds.size} find${if (finds.size == 1) "" else "s"} so far. Thank you for letting me search your property.",
-            12.5f, gapAfter = 18f,
+            12.5f, gapAfter = 14f,
         )
-        for (f in finds.sortedBy { it.createdAt }) {
+        val sorted = finds.sortedBy { it.createdAt }
+        if (site.ring.size >= 3 && sorted.isNotEmpty()) {
+            w.ensure(214f)
+            drawOutline(w.canvas, site.ring, RectF(M, w.y, W - M, w.y + 200f), sorted.map { it.geo })
+            w.y += 214f
+        }
+        for ((i, f) in sorted.withIndex()) {
             w.ensure(118f)
             val top = w.y
             val photo = f.photos.firstOrNull()?.let { Photos.thumb(ctx, it, 300) }
@@ -178,7 +194,7 @@ object Permissions {
             else w.canvas.drawRoundRect(RectF(M, top, M + 100f, top + 100f), 8f, 8f, Paint().apply { color = Color.rgb(241, 244, 243) })
             val x = M + 116f
             val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13.5f; typeface = Typeface.DEFAULT_BOLD; color = Color.rgb(20, 32, 29) }
-            w.canvas.drawText(f.name.take(60), x, top + 18f, tp)
+            w.canvas.drawText("${i + 1}.  ${f.name.take(60)}", x, top + 18f, tp)
             val sp = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; color = Color.rgb(85, 99, 95) }
             val details = listOfNotNull(f.category, f.material, f.depthIn?.let { if (metric) "${(it * 2.54).toInt()} cm deep" else "${if (it % 1.0 == 0.0) it.toInt() else it} in deep" }).joinToString(" · ")
             w.canvas.drawText(date(f.createdAt), x, top + 36f, sp)

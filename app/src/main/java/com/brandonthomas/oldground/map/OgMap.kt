@@ -415,7 +415,7 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
                 val name = f.string("name").orEmpty()
                 val photo = f.string("photo")?.let { images[it] }
                 val color = parseColor(f.string("color") ?: "#D4A017")
-                val pl = PinLabel(null, f.string("photo").takeIf { photo != null }, photo, color, name)
+                val pl = PinLabel(null, f.string("photo").takeIf { photo != null }, photo, color, name, f.string("icon"))
                 val (ic, anchorY) = pinIcon(pl, withLabel = false)
                 val mk = m.addMarker(MarkerOptions().position(LatLng(g.lat, g.lng)).icon(ic).anchor(0.5f, anchorY).zIndex(z))!!
                 mk.tag = f.string("id")
@@ -435,15 +435,15 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
 
     // ---------- labels ----------
 
-    private class PinLabel(var marker: Marker?, val photoKey: String?, val photo: Bitmap?, val color: Int, val name: String, var showing: Boolean = false)
+    private class PinLabel(var marker: Marker?, val photoKey: String?, val photo: Bitmap?, val color: Int, val name: String, val icon: String?, var showing: Boolean = false)
     private class SiteLabel(val marker: Marker, val w: Float, val h: Float)
     private val pinLabels = ArrayList<PinLabel>()
     private val siteLabels = ArrayList<SiteLabel>()
 
     private fun pinIcon(p: PinLabel, withLabel: Boolean): Pair<BitmapDescriptor, Float> {
         val name = if (withLabel) p.name else ""
-        val spec = "pin|${p.color}|${p.photoKey}|$name"
-        return pinIcons.getOrPut(spec) { pinBitmap(p.photo, p.color, name).let { (b, a) -> BitmapDescriptorFactory.fromBitmap(b) to a } }
+        val spec = "pin|${p.color}|${p.icon}|${p.photoKey}|$name"
+        return pinIcons.getOrPut(spec) { pinBitmap(p.photo, p.color, p.icon, name).let { (b, a) -> BitmapDescriptorFactory.fromBitmap(b) to a } }
     }
 
     private fun labelW(text: String, sizeSp: Float) = textPaint(sizeSp, Color.BLACK).measureText(text) + 8 * density
@@ -460,13 +460,13 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
         val pins = pinLabels.filter { it.marker != null }
         val at = pins.map { proj.toScreenLocation(it.marker!!.position) }
         pins.forEachIndexed { i, p ->
-            val r = (p.photo?.width ?: (2 * (8 + 2.5f) * density + 2).toInt()) / 2f
+            val r = (p.photo?.width ?: (2 * (PIN_R + 2.5f) * density + 2).toInt()) / 2f
             taken.add(android.graphics.RectF(at[i].x - r, at[i].y - r, at[i].x + r, at[i].y + r))
         }
         pins.forEachIndexed { i, p ->
             var show = false
             if (p.name.isNotEmpty()) {
-                val r = (p.photo?.height ?: (2 * (8 + 2.5f) * density + 2).toInt()) / 2f
+                val r = (p.photo?.height ?: (2 * (PIN_R + 2.5f) * density + 2).toInt()) / 2f
                 val w = labelW(p.name, 13f)
                 val box = android.graphics.RectF(at[i].x - w / 2, at[i].y + r, at[i].x + w / 2, at[i].y + r + labelH(13f))
                 show = taken.none { android.graphics.RectF.intersects(it, box) }
@@ -570,6 +570,23 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
         return bmp
     }
 
+    /** A point: its icon in white on a coloured circle with a white rim. */
+    private fun iconBitmap(color: Int, icon: String?): Bitmap {
+        val r = PIN_R * density
+        val s = 2.5f * density
+        val size = (2 * (r + s) + 2).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = Color.argb(70, 0, 0, 0); c.drawCircle(size / 2f, size / 2f + density * 0.8f, r + s / 2 + density * 0.6f, p)
+        p.color = Color.WHITE; c.drawCircle(size / 2f, size / 2f, r + s / 2, p)
+        p.color = color; c.drawCircle(size / 2f, size / 2f, r - s / 2, p)
+        val g = r * 1.05f
+        p.color = Color.WHITE
+        c.drawPath(com.brandonthomas.oldground.data.PinIcons.path(icon, g, size / 2f - g / 2, size / 2f - g / 2), p)
+        return bmp
+    }
+
     private fun ghostBitmap(color: Int): Bitmap {
         val r = 15 * density
         val size = (2 * r + 8 * density).toInt()
@@ -643,8 +660,8 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
     }
 
     /** A pin (its photo, or a coloured dot) with its name underneath. Returns the image and where the pin's centre sits (0..1 down it). */
-    private fun pinBitmap(photo: Bitmap?, color: Int, name: String): Pair<Bitmap, Float> {
-        val mark = photo ?: circleBitmap(8f, color, Color.WHITE, 2.5f)
+    private fun pinBitmap(photo: Bitmap?, color: Int, icon: String?, name: String): Pair<Bitmap, Float> {
+        val mark = photo ?: iconBitmap(color, icon)
         val label = name.takeIf { it.isNotEmpty() }?.let { textBitmap(it, 13f, Color.parseColor("#1f2622")) }
         val w = maxOf(mark.width, label?.width ?: 0)
         val h = mark.height + (label?.height ?: 0)
@@ -716,6 +733,8 @@ class OgMap(context: Context, @Suppress("UNUSED_PARAMETER") texture: Boolean = f
         private const val Z_DATA = 0f
 
         /** Streets without shops, businesses and transit icons, which only clutter a detecting map. */
+        /** Radius of a point's circle on the map, in dp. */
+        private const val PIN_R = 11f
         private const val QUIET_STYLE = """[
             {"featureType":"poi.business","stylers":[{"visibility":"off"}]},
             {"featureType":"poi.attraction","elementType":"labels.icon","stylers":[{"visibility":"off"}]},

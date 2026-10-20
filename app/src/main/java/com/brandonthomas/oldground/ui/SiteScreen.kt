@@ -50,6 +50,7 @@ import com.brandonthomas.oldground.data.Layer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -59,6 +60,10 @@ import com.brandonthomas.oldground.data.Photos
 import com.brandonthomas.oldground.data.Repo
 import com.brandonthomas.oldground.data.SITE_ACCESS
 import com.brandonthomas.oldground.data.Site
+import com.brandonthomas.oldground.data.Pin
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.brandonthomas.oldground.data.Sites
 import com.brandonthomas.oldground.data.Visit
 import com.brandonthomas.oldground.geo.Mercator
@@ -69,7 +74,15 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.format.DateTimeFormatter
 
-/** One site: the photo of everything found there, its totals, and each visit. */
+/** Which list shows on a site's page. */
+private enum class SiteTab(val label: String) { VISITS("Visits"), POINTS("Points"), NOTES("Notes") }
+
+/**
+ * One site, as its own little map: the outline with its points and paths, then its visits,
+ * points and notes. Permission sites have a one-line landowner bar that opens everything
+ * about the owner.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SiteScreen(nav: Nav, siteId: String, debug: String? = null) {
     val ctx = LocalContext.current
@@ -84,9 +97,13 @@ fun SiteScreen(nav: Nav, siteId: String, debug: String? = null) {
     }
     val metric = data.settings.metric
     val finds = remember(data.sites, data.pins) { Sites.findsBySite(data.sites, data.pins)[site.id].orEmpty() }
+    val points = remember(site, data.pins) { data.pins.filter { Sites.contains(site.ring, it.geo) }.sortedByDescending { it.createdAt } }
     val visits = remember(site, finds, trackPts) { Sites.visits(site, finds, trackPts) }
+    var tab by remember { mutableStateOf(when (debug) { "points" -> SiteTab.POINTS; "notes", "note" -> SiteTab.NOTES; else -> SiteTab.VISITS }) }
     var photoMenu by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(debug == "edit") }
+    var owner by remember { mutableStateOf(debug == "owner") }
+    var noteOpen by remember { mutableStateOf<Pair<Boolean, com.brandonthomas.oldground.data.SiteNote?>?>(if (debug == "note") true to site.notes.firstOrNull() else null) }
     var busy by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<java.time.LocalDate?>(if (debug == "visit") visits.firstOrNull { it.tracks.isNotEmpty() }?.day else null) }
 
@@ -106,84 +123,93 @@ fun SiteScreen(nav: Nav, siteId: String, debug: String? = null) {
     val cameraUri = remember { FileProvider.getUriForFile(ctx, ctx.packageName + ".files", cameraFile) }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok -> if (ok) setPhoto(cameraUri) }
     val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::setPhoto) }
+    val visitingHere = data.visits.lastOrNull { it.endedAt == null }?.siteId == site.id
 
-    Column(Modifier.fillMaxSize().background(C.bg).verticalScroll(rememberScrollState()).navigationBarsPadding()) {
-        // ---- the finds photo ----
-        Box(Modifier.fillMaxWidth().height(250.dp).background(Color(0xFF5E4A35))) {
-            if (site.photo != null) PhotoThumb(site.photo, Modifier.fillMaxSize(), px = 1000)
-            else Column(Modifier.align(Alignment.Center).padding(top = 30.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                GlyphIcon(Glyph.CAMERA, Color.White, Modifier.size(34.dp))
-                Text("Take one photo of all your finds laid out together", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 40.dp))
-                Pill("Add finds photo", { photoMenu = true }, kind = "plain", small = true)
+    Column(Modifier.fillMaxSize().background(C.bg).verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding()) {
+        // ---- name ----
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            RoundButton({ nav.back() }, "Back", size = 38.dp) { GlyphIcon(Glyph.BACK, C.ink, Modifier.size(20.dp)) }
+            Column(Modifier.weight(1f)) {
+                Text(site.name, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = C.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val where = fix?.let { f ->
+                    if (Sites.contains(site.ring, f.geo)) "you're here"
+                    else Sites.center(site.ring)?.let { c -> "${Mercator.formatDistance(Mercator.distanceMeters(f.geo, c), metric)} ${Mercator.compass(Mercator.bearing(f.geo, c))}" }
+                }
+                Text(
+                    listOfNotNull(site.access, Sites.formatArea(Sites.areaM2(site.ring), metric), "${visits.size} visit${if (visits.size == 1) "" else "s"}", where).joinToString(" · "),
+                    fontSize = 12.5.sp, color = C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
-            Box(Modifier.statusBarsPadding().padding(12.dp)) { RoundButton({ nav.back() }, "Back") { GlyphIcon(Glyph.BACK, C.ink) } }
-            if (site.photo != null) Text(
-                if (busy) "Adding photo…" else "Change finds photo",
-                Modifier.align(Alignment.BottomEnd).padding(12.dp).clip(RoundedCornerShape(50)).background(Color(0xB814201D)).clickable { photoMenu = true }.padding(horizontal = 12.dp, vertical = 7.dp),
-                color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Bold,
-            )
+            Text("Edit", Modifier.clip(RoundedCornerShape(50)).clickable { editing = true }.padding(horizontal = 8.dp, vertical = 6.dp), color = C.accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
 
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text(site.name, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
-                    val where = fix?.let { f ->
-                        if (Sites.contains(site.ring, f.geo)) "you're here"
-                        else Sites.center(site.ring)?.let { c -> "${Mercator.formatDistance(Mercator.distanceMeters(f.geo, c), metric)} ${Mercator.compass(Mercator.bearing(f.geo, c))}" }
-                    }
-                    Text(listOfNotNull(site.access, Sites.formatArea(Sites.areaM2(site.ring), metric), where).joinToString(" · "), fontSize = 13.sp, color = C.muted)
-                }
-                Pill("Edit", { editing = true }, kind = "soft", small = true)
-            }
+        Column(Modifier.padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // ---- the site's own map ----
+            val sel = visits.firstOrNull { it.day == selected }
+            SiteMap(site, visits, sel, points, Modifier.fillMaxWidth().height(200.dp)) { nav.go(Screen.Hunt(null, siteId = site.id)) }
+
+            // ---- add ----
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Stat("${visits.size}", "visits", Modifier.weight(1f))
-                Stat("${finds.size}", "finds", Modifier.weight(1f))
-                Stat("${finds.count { it.material == "Silver" }}", "silver", Modifier.weight(1f))
-                Stat(visits.sumOf { it.detectingMs }.takeIf { it > 0 }?.let(Sites::formatDuration) ?: "–", "detecting", Modifier.weight(1f))
+                if (visitingHere) Pill("End visit", { com.brandonthomas.oldground.location.VisitControl.end(ctx) }, Modifier.weight(1f), kind = "danger", small = true)
+                else Pill("+ Visit", { nav.go(Screen.Hunt(null, siteId = site.id, startVisit = true)) }, Modifier.weight(1f), kind = "primary", small = true)
+                Pill("+ Point", { nav.go(Screen.Hunt(null, siteId = site.id, addPoint = true)) }, Modifier.weight(1f), kind = "tint", small = true)
+                Pill("+ Note", { tab = SiteTab.NOTES; noteOpen = true to null }, Modifier.weight(1f), kind = "tint", small = true)
             }
-            if (site.access == "Permission" || site.permission != null) PermissionCard(nav, site, finds, metric)
-            val visitingHere = data.visits.lastOrNull { it.endedAt == null }?.siteId == site.id
-            Column(Modifier.fillMaxWidth().card(18).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Visits", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
-                    if (visitingHere) Text(
-                        "End visit", Modifier.clickable { com.brandonthomas.oldground.location.VisitControl.end(ctx) }.padding(4.dp),
-                        color = C.bad, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
-                    ) else Text(
-                        "+ Start", Modifier.clickable { nav.go(Screen.Hunt(null, siteId = site.id, startVisit = true)) }.padding(4.dp),
-                        color = C.accent, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
-                    )
+
+            // ---- landowner ----
+            if (site.access == "Permission" || site.permission != null) OwnerBar(site, onWriting = { nav.go(Screen.PermissionSlip(site.id)) }, onOwner = { owner = true })
+
+            Segmented(
+                tab,
+                SiteTab.entries.map { t ->
+                    t to "${t.label} ${when (t) { SiteTab.VISITS -> visits.size; SiteTab.POINTS -> points.size; SiteTab.NOTES -> site.notes.size }}"
+                },
+                { tab = it },
+                Modifier.fillMaxWidth(),
+            )
+
+            when (tab) {
+                SiteTab.VISITS -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            when {
+                                sel != null -> listOfNotNull(
+                                    sel.day.format(DAY),
+                                    sel.detectingMs.takeIf { it > 0 }?.let(Sites::formatDuration),
+                                    sel.walkedM.takeIf { it > 0 }?.let { Mercator.formatDistance(it, metric) },
+                                    "${sel.finds.size} find${if (sel.finds.size == 1) "" else "s"}",
+                                ).joinToString(" · ")
+                                visits.any { it.tracks.isNotEmpty() } -> "Your paths: newest bright, older ones fade"
+                                data.settings.recordPath -> "Your path shows on the map after a visit"
+                                else -> "Path recording is off in Settings"
+                            },
+                            Modifier.weight(1f), fontSize = 12.sp, color = C.muted, maxLines = 1,
+                        )
+                        if (sel != null) Text(
+                            "Open ›", Modifier.clickable { nav.go(Screen.Visit(site.id, sel.day.toString())) }.padding(start = 8.dp),
+                            color = C.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    if (visits.isEmpty()) Empty("No visits yet. Tap + Visit when you get there: the time, your path and what you find show up here by day.")
+                    for (v in visits) VisitCard(v, v.day == selected) { selected = if (selected == v.day) null else v.day }
+                    FindsPhotoRow(site.photo, busy) { photoMenu = true }
                 }
-                val sel = visits.firstOrNull { it.day == selected }
-                CoverageMap(site, visits, sel, Modifier.fillMaxWidth().height(190.dp)) { nav.go(Screen.Hunt(null, siteId = site.id)) }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        when {
-                            sel != null -> listOfNotNull(
-                                sel.day.format(DAY),
-                                sel.detectingMs.takeIf { it > 0 }?.let(Sites::formatDuration),
-                                sel.walkedM.takeIf { it > 0 }?.let { Mercator.formatDistance(it, metric) },
-                                "${sel.finds.size} find${if (sel.finds.size == 1) "" else "s"}",
-                            ).joinToString(" · ")
-                            visits.any { it.tracks.isNotEmpty() } -> "Your paths: newest bright, older ones fade"
-                            data.settings.recordPath -> "Your path shows here after a visit"
-                            else -> "Path recording is off in Settings"
-                        },
-                        Modifier.weight(1f), fontSize = 12.sp, color = C.muted, maxLines = 1,
-                    )
-                    if (sel != null) Text(
-                        "Open ›", Modifier.clickable { nav.go(Screen.Visit(site.id, sel.day.toString())) }.padding(start = 8.dp),
-                        color = C.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                    )
+                SiteTab.POINTS -> Column(Modifier.fillMaxWidth().card(16, 2)) {
+                    if (points.isEmpty()) Empty("No points yet. Tap + Point to mark a house site, a spring, a grave, anything worth finding again.", Modifier.padding(14.dp))
+                    points.forEachIndexed { i, p ->
+                        if (i > 0) Divider()
+                        PointRow(p, metric) { nav.go(Screen.Hunt(p.mapId, pinId = p.id, keepOldMap = true)) }
+                    }
                 }
-                if (visits.isEmpty()) Text(
-                    "No visits yet. Tap + Start when you get there. The time, your path and the finds you log inside the outline show up here by day.",
-                    color = C.muted, fontSize = 14.sp, lineHeight = 20.sp,
-                )
-                for (v in visits) VisitCard(v, v.day == selected) { selected = if (selected == v.day) null else v.day }
+                SiteTab.NOTES -> Column(Modifier.fillMaxWidth().card(16, 2)) {
+                    if (site.notes.isEmpty()) Empty("No notes yet. Keep deeds, old maps, history and leads here with + Note.", Modifier.padding(14.dp))
+                    site.notes.forEachIndexed { i, n ->
+                        if (i > 0) Divider()
+                        NoteRow(n) { noteOpen = true to n }
+                    }
+                }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
         }
     }
 
@@ -195,6 +221,15 @@ fun SiteScreen(nav: Nav, siteId: String, debug: String? = null) {
             site.photo?.let { old -> Choice("Remove photo", danger = true) { Repo.updateSite(site.id) { it.copy(photo = null) }; Photos.delete(ctx, old) } },
         ),
     ) { photoMenu = false }
+    if (owner) ModalBottomSheet(
+        onDismissRequest = { owner = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = C.panel, shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+    ) {
+        Box(Modifier.navigationBarsPadding().padding(bottom = 12.dp)) {
+            PermissionCard(nav, site, finds, metric, Modifier.fillMaxWidth())
+        }
+    }
+    noteOpen?.let { (_, n) -> NoteSheet(site.id, n) { noteOpen = null } }
     if (editing) EditSiteSheet(
         site,
         onDismiss = { editing = false },
@@ -203,17 +238,96 @@ fun SiteScreen(nav: Nav, siteId: String, debug: String? = null) {
             editing = false
             site.photo?.let { Photos.delete(ctx, it) }
             site.permission?.let { p -> com.brandonthomas.oldground.data.Permissions.file(ctx, p.signature).delete(); com.brandonthomas.oldground.data.Permissions.file(ctx, p.pdf).delete() }
+            for (n in site.notes) { n.photos.forEach { Photos.delete(ctx, it) }; n.files.forEach { com.brandonthomas.oldground.data.NoteFiles.delete(ctx, it) } }
             Repo.deleteSite(site.id)
             nav.back()
         },
     )
 }
 
+/** The landowner in one line: not in writing yet (with a way to get it), or who signed and until when. */
 @Composable
-private fun Stat(value: String, label: String, modifier: Modifier) {
-    Column(modifier.card(14, 2).padding(vertical = 10.dp, horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = C.ink, maxLines = 1)
-        Text(label, fontSize = 11.5.sp, color = C.muted, maxLines = 1)
+private fun OwnerBar(site: Site, onWriting: () -> Unit, onOwner: () -> Unit) {
+    val st = com.brandonthomas.oldground.data.Permissions.status(site)
+    val p = site.permission
+    val (badge, bg, fg) = when (st.level) {
+        com.brandonthomas.oldground.data.Permissions.Level.OK -> Triple("Signed", C.accentSoft, C.accent)
+        com.brandonthomas.oldground.data.Permissions.Level.SOON -> Triple("Expiring", Color(0xFFFEF3E2), Color(0xFFB45309))
+        com.brandonthomas.oldground.data.Permissions.Level.EXPIRED -> Triple("Expired", C.badSoft, C.badInk)
+        com.brandonthomas.oldground.data.Permissions.Level.NONE -> Triple("Verbal", Color(0xFFFEF3E2), Color(0xFFB45309))
+    }
+    Row(
+        Modifier.fillMaxWidth().card(14, 2).clickable { if (p == null) onWriting() else onOwner() }.padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(badge, Modifier.clip(RoundedCornerShape(50)).background(bg).padding(horizontal = 8.dp, vertical = 3.dp), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = fg)
+        val line = when {
+            p == null -> "Not in writing yet"
+            p.expiresAt == null -> "${p.ownerName} · until withdrawn"
+            else -> "${p.ownerName} · to ${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date(p.expiresAt))}"
+        }
+        Text(line, Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = C.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            if (p == null) "Get it in writing ›" else "Owner ›",
+            Modifier.clip(RoundedCornerShape(50)).background(C.accentSoft).padding(horizontal = 10.dp, vertical = 6.dp),
+            fontSize = 12.5.sp, fontWeight = FontWeight.ExtraBold, color = C.accent, maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun Empty(text: String, modifier: Modifier = Modifier) {
+    Text(text, modifier, color = C.muted, fontSize = 13.5.sp, lineHeight = 19.sp)
+}
+
+@Composable
+private fun PointRow(p: Pin, metric: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        val photo = p.photos.firstOrNull()
+        if (photo != null) PhotoThumb(photo, Modifier.size(34.dp).clip(CircleShape), px = 120) else PinBadge(p, 34.dp)
+        Column(Modifier.weight(1f)) {
+            Text(p.name, fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = C.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val sub = if (p.isFind) listOfNotNull("Find", SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(p.createdAt)), p.depthIn?.let { depthLabel(it, metric) }).joinToString(" · ")
+            else p.note.lineSequence().firstOrNull()?.takeIf { it.isNotBlank() } ?: com.brandonthomas.oldground.data.PinIcons.icon(p.iconId).label
+            Text(sub, fontSize = 12.5.sp, color = C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        GlyphIcon(Glyph.CHEVRON, C.faint, Modifier.size(16.dp))
+    }
+}
+
+@Composable
+private fun NoteRow(n: com.brandonthomas.oldground.data.SiteNote, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        val photo = n.photos.firstOrNull()
+        if (photo != null) PhotoThumb(photo, Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)), px = 120)
+        else Box(Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(C.soft), contentAlignment = Alignment.Center) { GlyphIcon(Glyph.BOOK, C.muted, Modifier.size(18.dp)) }
+        Column(Modifier.weight(1f)) {
+            Text(n.title, fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = C.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val extras = listOfNotNull(
+                n.photos.size.takeIf { it > 0 }?.let { "$it photo${if (it == 1) "" else "s"}" },
+                n.files.size.takeIf { it > 0 }?.let { "$it file${if (it == 1) "" else "s"}" },
+            )
+            Text(
+                (extras + listOfNotNull(n.text.lineSequence().firstOrNull()?.takeIf { it.isNotBlank() && it != n.title })).joinToString(" · ")
+                    .ifBlank { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(n.createdAt)) },
+                fontSize = 12.5.sp, color = C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        n.label?.let { Text(it, Modifier.clip(RoundedCornerShape(50)).background(C.soft).padding(horizontal = 8.dp, vertical = 3.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = C.muted) }
+    }
+}
+
+/** The one photo of everything found here, laid out together. */
+@Composable
+private fun FindsPhotoRow(photo: String?, busy: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().card(14, 2).clickable(onClick = onClick).padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (photo != null) PhotoThumb(photo, Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)), px = 160)
+        else Box(Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)).background(C.soft), contentAlignment = Alignment.Center) { GlyphIcon(Glyph.CAMERA, C.muted, Modifier.size(20.dp)) }
+        Column(Modifier.weight(1f)) {
+            Text("Finds photo", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = C.ink)
+            Text(if (busy) "Adding photo…" else "One picture of everything found here, laid out together", fontSize = 12.sp, color = C.muted, maxLines = 2)
+        }
+        Text(if (photo == null) "Add" else "Change", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = C.accent)
     }
 }
 
@@ -239,7 +353,7 @@ private fun VisitCard(v: Visit, on: Boolean, onClick: () -> Unit) {
                 val photo = p.photos.firstOrNull()
                 if (photo != null) PhotoThumb(photo, Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)), px = 160)
                 else Box(Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)).background(C.soft), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(12.dp).clip(CircleShape).background(hexColor(p.kind.color)))
+                    PinBadge(p, 26.dp)
                 }
             }
             if (v.finds.size > show.size) Box(Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)).background(C.soft), contentAlignment = Alignment.Center) {
@@ -297,18 +411,18 @@ private fun EditSiteSheet(site: Site, onDismiss: () -> Unit, onRedraw: () -> Uni
     ) { confirm = false; onDelete() }
 }
 
-/** The site with every visit's path: newest bright, older ones faded; a chosen visit stands out with its finds. */
+/** The site's own map: its outline, every visit's path (newest bright, older faded) and its points. A chosen visit stands out. */
 @Composable
-private fun CoverageMap(site: Site, visits: List<Visit>, sel: Visit?, modifier: Modifier, onClick: () -> Unit) {
+private fun SiteMap(site: Site, visits: List<Visit>, sel: Visit?, points: List<Pin>, modifier: Modifier, onClick: () -> Unit) {
     val conf = LocalConfiguration.current
     val m = rememberOgMap("cover-${site.id}", interactive = false)
     LaunchedEffect(m, site.outline) {
         val b = Sites.bounds(site.ring) ?: return@LaunchedEffect
-        m.setCamera(Sites.center(site.ring)!!, Sites.fitZoom(b, conf.screenWidthDp - 60f, 190f, 0.85), 0.0)
+        m.setCamera(Sites.center(site.ring)!!, Sites.fitZoom(b, conf.screenWidthDp - 28f, 200f, 0.8), 0.0)
         m.setBase(Base.Geo(Layer.AERIAL, "cover"), Repo.current.settings)
         m.setData(Data.SITES, Features.sites(listOf(site.copy(name = "")), { it }))
     }
-    LaunchedEffect(m, visits, sel) {
+    LaunchedEffect(m, visits, sel, points) {
         // visits are newest first: the newest is solid, each older one fainter (never below 0.25).
         val n = visits.size
         val paths = visits.withIndex().reversed().flatMap { (i, v) ->
@@ -322,9 +436,14 @@ private fun CoverageMap(site: Site, visits: List<Visit>, sel: Visit?, modifier: 
             }
         }.sortedBy { if (sel != null && it.color == "#ffe14d") 1 else 0 }
         m.setData(Data.TRACKS, Features.paths(paths))
-        m.setData(Data.PINS, Features.pins((sel?.finds ?: emptyList()).map { it.copy(name = "", photos = emptyList()) }, { it }))
+        val shown = if (sel != null) sel.finds else points
+        m.setData(Data.PINS, Features.pins(shown.map { it.copy(name = "", photos = emptyList()) }, { it }))
     }
     Box(modifier.clip(RoundedCornerShape(14.dp)).background(Color(0xFF6B7A45)).clickable(onClick = onClick)) {
         MapBox(m, Modifier.fillMaxSize())
+        Text(
+            "Open map ›", Modifier.align(Alignment.BottomEnd).padding(8.dp).clip(RoundedCornerShape(50)).background(Color(0xF0FFFFFF)).padding(horizontal = 10.dp, vertical = 5.dp),
+            fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = C.accent,
+        )
     }
 }
