@@ -107,6 +107,7 @@ import kotlin.math.atan2
 import kotlin.math.roundToInt
 
 enum class Mode(val label: String, val hint: String) {
+    SINGLE("Single map", "one map"),
     OVERLAY("Overlay", "one map over another"),
     SWIPE("Swipe", "drag a divider between two maps"),
     SPLIT("Split", "two maps, one above the other"),
@@ -173,7 +174,7 @@ fun HuntScreen(
     val frame = remember(map, georef) { if (map != null && georef?.ready == true) ScanFrame(map, georef) else null }
     val hasOld = frame != null
 
-    var mode by rememberSaveable { mutableStateOf(Mode.entries.firstOrNull { it.name == startMode } ?: Mode.OVERLAY) }
+    var mode by rememberSaveable { mutableStateOf(Mode.entries.firstOrNull { it.name == startMode } ?: Mode.SINGLE) }
     val chosen = remember { mutableStateMapOf<Slot, Layer>() }
     var picking by remember { mutableStateOf<Slot?>(null) }
     var follow by remember { mutableStateOf(false) }
@@ -510,16 +511,19 @@ fun HuntScreen(
                     }
                 }
 
-                Mode.DRIVE -> {
-                    val layer = slot(Slot.DRIVE)
+                Mode.SINGLE, Mode.DRIVE -> {
+                    // Single map is Drive without following and turning with you.
+                    val drive = mode == Mode.DRIVE
+                    val slotKey = if (drive) Slot.DRIVE else Slot.SINGLE
+                    val layer = slot(slotKey)
                     val scan = if (layer == Layer.OLDMAP) frame else null
-                    key(layer, scan != null) {
-                        val m = rememberOgMap("drive-$layer")
+                    key(drive, layer, scan != null) {
+                        val m = rememberOgMap("${if (drive) "drive" else "single"}-$layer")
                         LaunchedEffect(Unit) {
-                            follow = true
+                            if (drive) follow = true
                             m.compassTopPx = compassTop
                             m.rotateEnabled = scan == null
-                            val c = fix?.geo?.let { Cam(it, maxOf(startCam().zoom, 17.0), 0.0) } ?: startCam()
+                            val c = if (drive) fix?.geo?.let { Cam(it, maxOf(startCam().zoom, 17.0), 0.0) } ?: startCam() else startCam()
                             if (scan != null) scan.placeAny(c.center)?.let { m.setCamera(it, c.zoom + scan.zoomShift(c.center), 0.0) }
                             else m.setCamera(c.center, c.zoom, 0.0)
                         }
@@ -538,7 +542,7 @@ fun HuntScreen(
                             Toast("You're off the edge of this map", Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 92.dp), C.bad)
                         }
                     }
-                    LayerTag(layer.label, { picking = Slot.DRIVE }, Modifier.statusBarsPadding().padding(top = 52.dp, start = 10.dp))
+                    LayerTag(layer.label, { picking = slotKey }, Modifier.statusBarsPadding().padding(top = 52.dp, start = 10.dp))
                 }
             }
         }
@@ -800,6 +804,7 @@ private fun visibleLayers(mode: Mode, slot: (Slot) -> Layer): List<Layer> = when
     Mode.OVERLAY -> listOf(slot(Slot.OVERLAY_TOP), slot(Slot.OVERLAY_BOTTOM))
     Mode.SWIPE -> listOf(slot(Slot.SWIPE_LEFT), slot(Slot.SWIPE_RIGHT))
     Mode.SPLIT -> listOf(slot(Slot.SPLIT_TOP), slot(Slot.SPLIT_BOTTOM))
+    Mode.SINGLE -> listOf(slot(Slot.SINGLE))
     Mode.DRIVE -> listOf(slot(Slot.DRIVE))
 }
 
