@@ -32,6 +32,10 @@ class SwipeFrame(context: Context, lower: View, upper: View) : FrameLayout(conte
 
     private var dividerPx = -1
 
+    /** Draw the upper layer right of the divider instead of left (when the map itself is the left side). */
+    var upperOnRight = false
+        set(v) { field = v; applyClip() }
+
     /** Shows the upper map left of this x position (pixels). */
     fun setDivider(px: Int) {
         dividerPx = px
@@ -45,6 +49,7 @@ class SwipeFrame(context: Context, lower: View, upper: View) : FrameLayout(conte
 
     private fun applyClip() {
         val x = if (dividerPx < 0) width / 2 else dividerPx
-        clip.clipBounds = Rect(0, 0, x.coerceIn(0, width), height)
+        val cx = x.coerceIn(0, width)
+        clip.clipBounds = if (upperOnRight) Rect(cx, 0, width, height) else Rect(0, 0, cx, height)
     }
 }

@@ -354,9 +354,15 @@ fun HuntScreen(
                         m.compassTopPx = compassTop
                         startCam().let { m.setCamera(it.center, it.zoom, it.bearing) }
                     }
-                    LaunchedEffect(bottom, settings.lidarStyle, settings.lidarAzimuth) { m.setBase(Base.Geo(bottom, lidarKey(settings)), settings) }
-                    LaunchedEffect(top, settings, map?.warp?.zDone, map?.warp?.dir) {
-                        m.setOverlay(Sources.raster(top, settings, map), settings.overlayOpacity)
+                    // Only the map itself can show Google's satellite: with Satellite on top, the map shows
+                    // it and the bottom layer is drawn over it, faded the other way, which looks the same.
+                    // (Satellite over Streets is Google's satellite with its road names.)
+                    val satTop = top == Layer.AERIAL && bottom != Layer.AERIAL
+                    val liveLayer = if (satTop) Layer.AERIAL else bottom
+                    val drawn = if (satTop) bottom.takeIf { it != Layer.STREETS } else top
+                    LaunchedEffect(liveLayer, settings.lidarStyle, settings.lidarAzimuth) { m.setBase(Base.Geo(liveLayer, lidarKey(settings)), settings) }
+                    LaunchedEffect(drawn, satTop, settings, map?.warp?.zDone, map?.warp?.dir) {
+                        m.setOverlay(drawn?.let { Sources.raster(it, settings, map) }, if (satTop) 1f - settings.overlayOpacity else settings.overlayOpacity)
                     }
                     LiveMap("main", m, null, live)
                     SideEffect {
@@ -387,9 +393,13 @@ fun HuntScreen(
                         startCam().let { lower.setCamera(it.center, it.zoom, 0.0) }
                         upper.source = lower
                     }
-                    LaunchedEffect(right, settings.lidarStyle, settings.lidarAzimuth) { lower.setBase(Base.Geo(right, lidarKey(settings)), settings) }
-                    // The left side is drawn as tiles (Google's own map can't be cut at the divider).
-                    LaunchedEffect(left, settings, map?.warp?.zDone, map?.warp?.dir) { upper.raster = Sources.raster(left, settings, map) }
+                    // One side is drawn as tiles (Google's own map can't be cut at the divider). Usually the
+                    // left; with Satellite on the left, the map shows Google's satellite and the right side is drawn.
+                    val satLeft = left == Layer.AERIAL && right != Layer.AERIAL && right != Layer.STREETS
+                    val liveLayer = if (satLeft) Layer.AERIAL else right
+                    val drawn = if (satLeft) right else left
+                    LaunchedEffect(liveLayer, settings.lidarStyle, settings.lidarAzimuth) { lower.setBase(Base.Geo(liveLayer, lidarKey(settings)), settings) }
+                    LaunchedEffect(drawn, settings, map?.warp?.zDone, map?.warp?.dir) { upper.raster = Sources.raster(drawn, settings, map) }
                     LaunchedEffect(data.pins, fix) {
                         upper.pins = data.pins.map { it.geo to android.graphics.Color.parseColor(it.colorHex) }
                         upper.gps = fix?.geo
@@ -410,7 +420,7 @@ fun HuntScreen(
                         var dividerPx by remember { mutableFloatStateOf(widthPx / 2f) }
                         AndroidView(
                             factory = { SwipeFrame(it, lower.view, upper) },
-                            update = { it.setDivider(dividerPx.roundToInt()) },
+                            update = { it.upperOnRight = satLeft; it.setDivider(dividerPx.roundToInt()) },
                             modifier = Modifier.fillMaxSize(),
                         )
                         // Divider handle: only this strip takes touches.
