@@ -955,7 +955,7 @@ private fun MapControls(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (!pinMode) GlyphIcon(Glyph.PLUS, Color.White, Modifier.size(16.dp))
-                Text(if (pinMode) "Cancel" else "Add pin", color = if (pinMode) C.ink else Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                Text(if (pinMode) "Cancel" else "Add point", color = if (pinMode) C.ink else Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
         // Only while guiding to a find: how far and which way.
@@ -976,7 +976,7 @@ private fun MapControls(
             Column(Modifier.weight(1f)) {
                 val top = when {
                     fix == null -> "Finding your location…"
-                    nearest == null -> "No finds yet. Tap + Find, or hold a finger on the map."
+                    nearest == null -> "Nothing marked yet. Tap Add point, or hold a finger on the map."
                     else -> {
                         val d = Mercator.formatDistance(Mercator.distanceMeters(fix.geo, nearest.geo), settings.metric)
                         val dir = Mercator.compass(Mercator.bearing(fix.geo, nearest.geo))

@@ -124,7 +124,7 @@ fun SettingsScreen(nav: Nav) {
                 }
             }
             Group("Your data") {
-                Item("Export pins and tracks", "A GPX file for other GPS units and apps", onClick = { message = exportGpx(ctx) }) {
+                Item("Export points and tracks", "A GPX file for other GPS units and apps", onClick = { message = exportGpx(ctx) }) {
                     GlyphIcon(Glyph.CHEVRON, C.faint, Modifier.size(18.dp))
                 }
             }

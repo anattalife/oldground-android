@@ -96,7 +96,7 @@ fun FindsRoot(nav: Nav, startSub: Int = 0) {
     Column(Modifier.fillMaxSize().background(C.bg)) {
         TabHeader("Finds", nav) { Pill("Export", { message = exportGpx(ctx) }, kind = "tint", small = true) }
         Segmented(
-            sub, listOf(0 to "Finds $findCount", 1 to "Other pins $otherCount"), { sub = it },
+            sub, listOf(0 to "Finds $findCount", 1 to "Other points $otherCount"), { sub = it },
             Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
         )
         when (sub) {
@@ -226,7 +226,7 @@ private fun AllFindsTab(nav: Nav, data: AppData, bySite: Map<String?, List<Pin>>
             SubChip("★★★★+", filter == FindFilter.TOP) { filter = FindFilter.TOP }
         }
         Spacer(Modifier.height(12.dp))
-        if (all.isEmpty()) Text("No finds yet. On the map, tap Pin to log one.", color = C.muted, modifier = Modifier.padding(vertical = 16.dp))
+        if (all.isEmpty()) Text("No finds yet. On the map, tap Add point during a visit to log one.", color = C.muted, modifier = Modifier.padding(vertical = 16.dp))
         val groups = data.sites.map { it to bySite[it.id].orEmpty() } + (null to bySite[null].orEmpty())
         var shown = 0
         for ((site, finds) in groups) {

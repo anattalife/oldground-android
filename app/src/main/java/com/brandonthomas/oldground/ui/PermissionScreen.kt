@@ -229,7 +229,7 @@ fun PermissionSlipScreen(nav: Nav, siteId: String, debug: String? = null) {
 
             Step.SIGN -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Column(Modifier.weight(1f).fillMaxWidth().card(14, 2).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Permission to metal detect", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
+                    Text("Permission to search", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
                     for (para in Permissions.wording(site.name, owner, hunter, startsAt, expiresAt, picked.toList(), extra)) Text(para, fontSize = 16.sp, color = BODY, lineHeight = 23.sp)
                 }
                 Text("${owner.ifBlank { "Owner" }}, sign with your finger:", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = C.ink)
